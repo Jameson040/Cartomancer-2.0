@@ -1,0 +1,8 @@
+{
+  "name": "Remix Cartomancer - Fantasy Map Maker",
+  "description": "Professional-grade fantasy map creator with terrain painting, custom AI asset vault management, contour generation, hydrological river routing, and vintage cartographic styling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
