@@ -19,6 +19,7 @@ import {
   RotateCw,
   RotateCcw,
   FlipHorizontal,
+  FlipVertical,
   Trash2,
   Copy,
   ArrowUp,
@@ -67,12 +68,21 @@ interface ToolSettingsPanelProps {
   // Path options
   activePathStyle?: PathStyle;
   onPathStyleChange?: (style: PathStyle) => void;
+  pathWidth?: number;
+  onPathWidthChange?: (width: number) => void;
   pathColor: string;
   onPathColorChange: (color: string) => void;
   pathTaper: boolean;
   onPathTaperChange: (taper: boolean) => void;
   pathDoubleLine: boolean;
   onPathDoubleLineChange: (val: boolean) => void;
+  pathTextureId?: string;
+  onPathTextureIdChange?: (textureId: string) => void;
+  pathRestrictToLand?: boolean;
+  onPathRestrictToLandChange?: (val: boolean) => void;
+  pathAutoMerge?: boolean;
+  onPathAutoMergeChange?: (val: boolean) => void;
+  onUpdateSelectedPath?: (updates: Partial<PlacedPath>) => void;
   activePathDraft: any | null;
   onFinishActivePath: () => void;
   // Label options
@@ -99,15 +109,35 @@ interface ToolSettingsPanelProps {
   onOpenShaderLab?: () => void;
 }
 
-const BIOMES: { id: BiomePreset; label: string; color: string; desc: string }[] = [
-  { id: 'grassland', label: 'Verdant Meadow', color: '#606c38', desc: 'Lush temperate plains & valleys' },
-  { id: 'ancient_forest', label: 'Ancient Forest', color: '#283618', desc: 'Dense canopy & evergreen groves' },
-  { id: 'arid_desert', label: 'Sunken Desert', color: '#dda15e', desc: 'Dunes, badlands & sunbaked clay' },
-  { id: 'arctic_frost', label: 'Glacial Tundra', color: '#e0f2fe', desc: 'Permafrost, snowfields & blue ice' },
-  { id: 'rocky_crags', label: 'Granite Peaks', color: '#78716c', desc: 'Exposed stone & scree highlands' },
-  { id: 'marshland', label: 'Murky Fen', color: '#4d7c0f', desc: 'Wetlands, mossy bogs & peat' },
-  { id: 'volcanic_ash', label: 'Volcanic Wastes', color: '#451a03', desc: 'Basalt, obsidian & scorched earth' },
+const BIOMES: { id: BiomePreset; label: string; color: string; desc: string; defaultElevation: number }[] = [
+  { id: 'lush_grass', label: 'Verdant Meadow', color: '#5b8e3d', desc: 'Lush temperate plains & valleys', defaultElevation: 15 },
+  { id: 'highland_forest', label: 'Ancient Forest', color: '#345e33', desc: 'Dense canopy & evergreen groves', defaultElevation: 35 },
+  { id: 'golden_sand', label: 'Sunken Desert', color: '#d4a853', desc: 'Dunes, badlands & sunbaked clay', defaultElevation: 10 },
+  { id: 'snow_peaks', label: 'Glacial Tundra', color: '#e2edf8', desc: 'Permafrost, snowfields & blue ice', defaultElevation: 85 },
+  { id: 'mountain_stone', label: 'Granite Peaks', color: '#7a7672', desc: 'Exposed stone & scree highlands', defaultElevation: 60 },
+  { id: 'swamp_marsh', label: 'Murky Fen', color: '#4a573e', desc: 'Wetlands, mossy bogs & peat', defaultElevation: 5 },
+  { id: 'volcanic_ash', label: 'Volcanic Wastes', color: '#383032', desc: 'Basalt, obsidian & scorched earth', defaultElevation: 50 },
+  { id: 'red_mesa', label: 'Red Mesa Badlands', color: '#b85d38', desc: 'Terracotta canyons & sandstone', defaultElevation: 45 },
+  { id: 'ancient_parchment', label: 'Aged Parchment', color: '#e4d3a8', desc: 'Natural antique parchment wash', defaultElevation: 20 },
+  { id: 'cobblestone', label: 'Cobblestone Roads', color: '#83868c', desc: 'Stone paving & castle masonry', defaultElevation: 18 },
+  { id: 'shallow_shallows', label: 'Coastal Lagoon', color: '#369ab8', desc: 'Shallow coastal waters & reef shoals', defaultElevation: -5 },
+  { id: 'deep_ocean', label: 'Abyssal Ocean', color: '#1a365d', desc: 'Deep ocean depths & nautical blues', defaultElevation: -40 },
 ];
+
+const BIOME_ALIAS_TO_CANONICAL: Record<string, string> = {
+  grassland: 'lush_grass',
+  lush_meadow: 'lush_grass',
+  ancient_forest: 'highland_forest',
+  forest: 'highland_forest',
+  arid_desert: 'golden_sand',
+  desert: 'golden_sand',
+  arctic_frost: 'snow_peaks',
+  tundra: 'snow_peaks',
+  rocky_crags: 'mountain_stone',
+  mountain: 'mountain_stone',
+  marshland: 'swamp_marsh',
+  swamp: 'swamp_marsh',
+};
 
 const FONT_OPTIONS = [
   { value: "'Cinzel Decorative', serif", label: 'Cinzel Decorative (Imperial)' },
@@ -138,12 +168,21 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
   onOpenAssetLibrary,
   activePathStyle = 'river',
   onPathStyleChange,
+  pathWidth,
+  onPathWidthChange,
   pathColor,
   onPathColorChange,
   pathTaper,
   onPathTaperChange,
   pathDoubleLine,
   onPathDoubleLineChange,
+  pathTextureId = 'default',
+  onPathTextureIdChange,
+  pathRestrictToLand = true,
+  onPathRestrictToLandChange,
+  pathAutoMerge = true,
+  onPathAutoMergeChange,
+  onUpdateSelectedPath,
   activePathDraft,
   onFinishActivePath,
   activeTextString,
@@ -311,8 +350,9 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                     onChange={(e) => onUpdateSelectedStamp({ rotation: Number(e.target.value) })}
                     className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
                   />
-                  <div className="grid grid-cols-4 gap-1 pt-0.5">
+                  <div className="grid grid-cols-3 gap-1 pt-0.5">
                     <button
+                      id="btn-stamp-rot-minus45"
                       onClick={() => onUpdateSelectedStamp({ rotation: ((selectedStamp.rotation ?? 0) - 45 + 360) % 360 })}
                       className="py-1 rounded bg-[#F4EBD0] hover:bg-[#EFE5C9] font-medium border border-[#E2D6B5] text-[10px] flex items-center justify-center gap-1 cursor-pointer"
                       title="Rotate -45°"
@@ -320,28 +360,59 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                       <RotateCcw className="w-3 h-3" /> -45°
                     </button>
                     <button
+                      id="btn-stamp-rot-0"
                       onClick={() => onUpdateSelectedStamp({ rotation: 0 })}
                       className="py-1 rounded bg-[#F4EBD0] hover:bg-[#EFE5C9] font-medium border border-[#E2D6B5] text-[10px] cursor-pointer"
                     >
                       0°
                     </button>
                     <button
+                      id="btn-stamp-rot-plus45"
                       onClick={() => onUpdateSelectedStamp({ rotation: ((selectedStamp.rotation ?? 0) + 45) % 360 })}
                       className="py-1 rounded bg-[#F4EBD0] hover:bg-[#EFE5C9] font-medium border border-[#E2D6B5] text-[10px] flex items-center justify-center gap-1 cursor-pointer"
                       title="Rotate +45°"
                     >
                       <RotateCw className="w-3 h-3" /> +45°
                     </button>
+                  </div>
+                </div>
+
+                {/* Flipping (Mirror) Controls - Flip X & Flip Y */}
+                <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="font-semibold text-slate-700">Flipping (Mirror)</span>
+                    <span className="text-[10px] font-mono text-amber-800">
+                      {selectedStamp.flipX ? 'Flip X ' : ''}
+                      {selectedStamp.flipY ? 'Flip Y ' : ''}
+                      {!selectedStamp.flipX && !selectedStamp.flipY ? 'Normal' : ''}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
                     <button
+                      id="btn-selected-flip-x"
                       onClick={() => onUpdateSelectedStamp({ flipX: !selectedStamp.flipX })}
-                      className={`py-1 rounded font-medium border text-[10px] flex items-center justify-center gap-1 cursor-pointer ${
+                      className={`py-1.5 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
                         selectedStamp.flipX
-                          ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
-                          : 'bg-[#F4EBD0] hover:bg-[#EFE5C9] border-[#E2D6B5]'
+                          ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                          : 'bg-[#F4EBD0] hover:bg-[#EFE5C9] text-slate-800 border-[#E2D6B5]'
                       }`}
-                      title="Flip Horizontal"
+                      title="Flip stamp horizontally (Flip X - mirror left/right)"
                     >
-                      <FlipHorizontal className="w-3 h-3" /> Flip
+                      <FlipHorizontal className="w-3.5 h-3.5" />
+                      <span>Flip X</span>
+                    </button>
+                    <button
+                      id="btn-selected-flip-y"
+                      onClick={() => onUpdateSelectedStamp({ flipY: !selectedStamp.flipY })}
+                      className={`py-1.5 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        selectedStamp.flipY
+                          ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                          : 'bg-[#F4EBD0] hover:bg-[#EFE5C9] text-slate-800 border-[#E2D6B5]'
+                      }`}
+                      title="Flip stamp vertically (Flip Y - mirror upside down)"
+                    >
+                      <FlipVertical className="w-3.5 h-3.5" />
+                      <span>Flip Y</span>
                     </button>
                   </div>
                 </div>
@@ -669,13 +740,62 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   <span className="font-mono text-[10px] text-slate-500">{selectedPath.points.length} nodes</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-slate-600">Type:</span>
-                  <span className="font-bold capitalize text-slate-800">{selectedPath.type}</span>
+                  <span className="text-[11px] text-slate-600">Style / Type:</span>
+                  <span className="font-bold capitalize text-slate-800">{selectedPath.style || selectedPath.type}</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-slate-600">Stroke Width:</span>
-                  <span className="font-mono font-bold text-slate-800">{selectedPath.width}px</span>
+                {/* Stroke Width Slider */}
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-slate-600 font-semibold">Stroke Width</span>
+                    <span className="font-mono font-bold text-amber-800">{selectedPath.width}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="2"
+                    max="40"
+                    step="1"
+                    value={selectedPath.width}
+                    onChange={(e) => onUpdateSelectedPath?.({ width: Number(e.target.value) })}
+                    className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                  />
                 </div>
+                {/* Texture / Material Selector */}
+                <div className="flex flex-col gap-1 pt-1 border-t border-[#E2D6B5]/50">
+                  <span className="text-[11px] font-semibold text-slate-700">Surface Texture / Material</span>
+                  <select
+                    value={selectedPath.textureId || 'default'}
+                    onChange={(e) => onUpdateSelectedPath?.({ textureId: e.target.value })}
+                    className="w-full text-xs p-1.5 rounded-lg border border-[#E2D6B5] bg-white text-slate-800 font-medium"
+                  >
+                    <option value="default">Default Cartographic Color</option>
+                    <optgroup label="Default Biomes">
+                      {DEFAULT_BIOMES.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                    {customBiomes && customBiomes.length > 0 && (
+                      <optgroup label="Custom Biomes & Shaders">
+                        {customBiomes.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+                {/* Restrict to Landmass Toggle */}
+                <label className="flex items-center justify-between cursor-pointer text-xs pt-1 border-t border-[#E2D6B5]/50">
+                  <span className="text-[11px] text-slate-700">Restrict to Landmass</span>
+                  <input
+                    type="checkbox"
+                    checked={selectedPath.restrictToLand !== false}
+                    onChange={(e) => onUpdateSelectedPath?.({ restrictToLand: e.target.checked })}
+                    className="accent-amber-700 rounded"
+                  />
+                </label>
                 <button
                   onClick={onDeleteSelectedPath}
                   className="w-full py-1.5 mt-2 rounded-lg bg-red-50 hover:bg-red-100 font-medium border border-red-200 text-[11px] flex items-center justify-center gap-1.5 cursor-pointer text-red-700"
@@ -711,9 +831,10 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               <span className="font-semibold text-slate-800 text-[11px]">Sculpting Mode</span>
               <div className="grid grid-cols-2 gap-1.5">
                 <button
-                  onClick={() => onUpdateBrushSettings({ mode: 'add' })}
+                  id="landmass-mode-add"
+                  onClick={() => onUpdateBrushSettings({ maskMode: 'add_land', mode: 'add' })}
                   className={`py-2 rounded-lg font-semibold border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    brushSettings.mode === 'add'
+                    brushSettings.maskMode === 'add_land' || brushSettings.mode === 'add'
                       ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
                       : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
                   }`}
@@ -721,9 +842,10 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   <MountainSnow className="w-3.5 h-3.5 text-amber-400" /> Add Landmass
                 </button>
                 <button
-                  onClick={() => onUpdateBrushSettings({ mode: 'subtract' })}
+                  id="landmass-mode-carve"
+                  onClick={() => onUpdateBrushSettings({ maskMode: 'carve_water', mode: 'subtract' })}
                   className={`py-2 rounded-lg font-semibold border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                    brushSettings.mode === 'subtract'
+                    brushSettings.maskMode === 'carve_water' || brushSettings.mode === 'subtract'
                       ? 'bg-[#1e3a8a] text-blue-200 border-[#172554] shadow-xs'
                       : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
                   }`}
@@ -858,32 +980,42 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
             {/* Standard Built-in Biomes */}
             <div className="flex flex-col gap-1.5">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Standard Biomes</span>
-              {BIOMES.map((b) => (
-                <button
-                  key={b.id}
-                  onClick={() => {
-                    onUpdateBrushSettings({ selectedBiome: b.id });
-                    onSelectBiome(b.id);
-                  }}
-                  className={`p-2 rounded-xl border flex items-center gap-3 transition-all cursor-pointer text-left ${
-                    activeBiome === b.id || brushSettings.selectedBiome === b.id
-                      ? 'bg-white border-[#b45309] shadow-xs ring-1 ring-[#b45309]'
-                      : 'bg-white/60 border-[#E2D6B5] hover:bg-white'
-                  }`}
-                >
-                  <span
-                    className="w-5 h-5 rounded-full shrink-0 shadow-inner border border-black/20"
-                    style={{ backgroundColor: b.color }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-slate-900 text-xs leading-tight">{b.label}</div>
-                    <div className="text-[10px] text-slate-500 truncate">{b.desc}</div>
-                  </div>
-                  {(activeBiome === b.id || brushSettings.selectedBiome === b.id) && (
-                    <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                  )}
-                </button>
-              ))}
+              {BIOMES.map((b) => {
+                const currentSelected = brushSettings.selectedBiome || activeBiome;
+                const canonicalSelected = BIOME_ALIAS_TO_CANONICAL[currentSelected?.toLowerCase()] || currentSelected;
+                const isSelected =
+                  currentSelected === b.id ||
+                  canonicalSelected === b.id ||
+                  activeBiome === b.id;
+
+                return (
+                  <button
+                    key={b.id}
+                    id={`biome-standard-${b.id}`}
+                    onClick={() => {
+                      onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
+                      onSelectBiome(b.id);
+                    }}
+                    className={`p-2 rounded-xl border flex items-center gap-3 transition-all cursor-pointer text-left ${
+                      isSelected
+                        ? 'bg-white border-[#b45309] shadow-xs ring-1 ring-[#b45309]'
+                        : 'bg-white/60 border-[#E2D6B5] hover:bg-white'
+                    }`}
+                  >
+                    <span
+                      className="w-5 h-5 rounded-full shrink-0 shadow-inner border border-black/20"
+                      style={{ backgroundColor: b.color }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-slate-900 text-xs leading-tight">{b.label}</div>
+                      <div className="text-[10px] text-slate-500 truncate">{b.desc}</div>
+                    </div>
+                    {isSelected && (
+                      <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Brush Size & Opacity */}
@@ -1180,6 +1312,56 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 </label>
               </div>
             </div>
+
+            {/* Placement Flipping (Flip X & Flip Y before stamping) */}
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="font-semibold text-slate-700">Placement Flipping</span>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {brushSettings.stampFlipX ? 'Flip X ' : ''}
+                  {brushSettings.stampFlipY ? 'Flip Y ' : ''}
+                  {!brushSettings.stampFlipX && !brushSettings.stampFlipY ? 'Standard' : ''}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  id="btn-brush-flip-x"
+                  onClick={() => onUpdateBrushSettings({ stampFlipX: !brushSettings.stampFlipX })}
+                  className={`py-1.5 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                    brushSettings.stampFlipX
+                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                      : 'bg-white hover:bg-slate-50 text-slate-700 border-[#E2D6B5]'
+                  }`}
+                  title="Flip stamp horizontally before placing (Flip X)"
+                >
+                  <FlipHorizontal className="w-3.5 h-3.5" />
+                  <span>Flip X</span>
+                </button>
+                <button
+                  id="btn-brush-flip-y"
+                  onClick={() => onUpdateBrushSettings({ stampFlipY: !brushSettings.stampFlipY })}
+                  className={`py-1.5 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                    brushSettings.stampFlipY
+                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                      : 'bg-white hover:bg-slate-50 text-slate-700 border-[#E2D6B5]'
+                  }`}
+                  title="Flip stamp vertically before placing (Flip Y)"
+                >
+                  <FlipVertical className="w-3.5 h-3.5" />
+                  <span>Flip Y</span>
+                </button>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer text-[11px] pt-0.5 text-slate-700 select-none">
+                <input
+                  id="chk-randomize-flip-x"
+                  type="checkbox"
+                  checked={Boolean(brushSettings.randomizeFlipX)}
+                  onChange={(e) => onUpdateBrushSettings({ randomizeFlipX: e.target.checked })}
+                  className="accent-amber-700 rounded"
+                />
+                <span>Organic Random Flip X (for forests/mountains)</span>
+              </label>
+            </div>
           </div>
         )}
 
@@ -1240,26 +1422,128 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </div>
             </div>
 
+            {/* Surface Texture / Material (Shader Lab & Biome Textures) */}
+            <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-800 text-[11px]">Surface Texture / Material</span>
+                {onOpenShaderLab && (
+                  <button
+                    onClick={onOpenShaderLab}
+                    className="text-[10px] font-medium text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Open Shader Lab & Custom Biome Maker to create or import custom textures"
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-600" /> Shader Lab
+                  </button>
+                )}
+              </div>
+
+              {/* Texture Swatches Grid */}
+              <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                {/* Default Cartographic Tint */}
+                <button
+                  onClick={() => onPathTextureIdChange?.('default')}
+                  className={`p-2 rounded-lg border text-left flex items-center gap-2 cursor-pointer transition-all ${
+                    pathTextureId === 'default'
+                      ? 'bg-amber-100/90 border-amber-600 ring-1 ring-amber-500 shadow-xs'
+                      : 'bg-white border-[#E2D6B5] hover:bg-[#FDF6E3]'
+                  }`}
+                >
+                  <span
+                    className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0"
+                    style={{ backgroundColor: pathColor || '#38bdf8' }}
+                  />
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[11px] font-bold text-slate-800 truncate">Default Style</span>
+                    <span className="text-[9px] text-slate-500 truncate">Cartographic tint</span>
+                  </div>
+                </button>
+
+                {/* Default Biomes */}
+                {DEFAULT_BIOMES.map((biome) => {
+                  const isSelected = pathTextureId === biome.id;
+                  return (
+                    <button
+                      key={biome.id}
+                      onClick={() => onPathTextureIdChange?.(biome.id)}
+                      className={`p-2 rounded-lg border text-left flex items-center gap-2 cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-amber-100/90 border-amber-600 ring-1 ring-amber-500 shadow-xs'
+                          : 'bg-white border-[#E2D6B5] hover:bg-[#FDF6E3]'
+                      }`}
+                    >
+                      <div
+                        className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0"
+                        style={{ backgroundColor: biome.color }}
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[11px] font-bold text-slate-800 truncate">{biome.name}</span>
+                        <span className="text-[9px] text-slate-500 truncate capitalize">{biome.detailType}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {/* Custom Biomes from Shader Lab */}
+                {customBiomes && customBiomes.map((biome) => {
+                  const isSelected = pathTextureId === biome.id;
+                  return (
+                    <button
+                      key={biome.id}
+                      onClick={() => onPathTextureIdChange?.(biome.id)}
+                      className={`p-2 rounded-lg border text-left flex items-center gap-2 cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-amber-100/90 border-amber-600 ring-1 ring-amber-500 shadow-xs'
+                          : 'bg-white border-[#E2D6B5] hover:bg-[#FDF6E3]'
+                      }`}
+                    >
+                      {biome.isPattern && biome.patternImageUrl ? (
+                        <div
+                          className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0 bg-cover bg-center"
+                          style={{ backgroundImage: `url(${biome.patternImageUrl})` }}
+                        />
+                      ) : (
+                        <span
+                          className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0"
+                          style={{ backgroundColor: biome.color }}
+                        />
+                      )}
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[11px] font-bold text-slate-800 truncate">{biome.name}</span>
+                        <span className="text-[9px] text-amber-600 font-semibold truncate">Custom Shader</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-slate-500 leading-tight">
+                Drawn routes and rivers take on the selected surface material. Use Shader Lab & Custom Biome Maker to create or import additional textures.
+              </p>
+            </div>
+
             {/* Line Width */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
                 <span className="font-semibold text-slate-700">Line Width</span>
-                <span className="font-mono font-bold text-amber-700">{brushSettings.size ?? 8}px</span>
+                <span className="font-mono font-bold text-amber-700">{pathWidth ?? brushSettings.size ?? 8}px</span>
               </div>
               <input
                 type="range"
                 min="2"
                 max="40"
                 step="1"
-                value={brushSettings.size ?? 8}
-                onChange={(e) => onUpdateBrushSettings({ size: Number(e.target.value) })}
+                value={pathWidth ?? brushSettings.size ?? 8}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  onPathWidthChange?.(val);
+                  onUpdateBrushSettings({ size: val });
+                }}
                 className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
               />
             </div>
 
             {/* Color Choice */}
             <div className="flex flex-col gap-1 pt-1 border-t border-[#E2D6B5]/50">
-              <span className="font-semibold text-slate-700 text-[11px]">Path Color</span>
+              <span className="font-semibold text-slate-700 text-[11px]">Path Tint Color</span>
               <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-[#E2D6B5]">
                 <input
                   type="color"
@@ -1276,8 +1560,36 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </div>
             </div>
 
-            {/* Taper & Double Line */}
+            {/* Path Routing & Ergonomic Toggles */}
             <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
+              <span className="font-semibold text-slate-800 text-[11px]">Routing & Boundary Rules</span>
+
+              <label className="flex items-center justify-between cursor-pointer text-xs bg-white/70 p-2 rounded-lg border border-[#E2D6B5]">
+                <div className="flex flex-col pr-2">
+                  <span className="font-semibold text-slate-800">Restrict to Landmass</span>
+                  <span className="text-[10px] text-slate-500">Limits routes & rivers to land (mirrors biome limits; no water spill)</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(pathRestrictToLand)}
+                  onChange={(e) => onPathRestrictToLandChange?.(e.target.checked)}
+                  className="accent-amber-700 rounded w-4 h-4 cursor-pointer shrink-0"
+                />
+              </label>
+
+              <label className="flex items-center justify-between cursor-pointer text-xs bg-white/70 p-2 rounded-lg border border-[#E2D6B5]">
+                <div className="flex flex-col pr-2">
+                  <span className="font-semibold text-slate-800">Auto-Merge Overlapping Ends</span>
+                  <span className="text-[10px] text-slate-500">Automatically fuses connected routes & rivers to eliminate seams</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(pathAutoMerge)}
+                  onChange={(e) => onPathAutoMergeChange?.(e.target.checked)}
+                  className="accent-amber-700 rounded w-4 h-4 cursor-pointer shrink-0"
+                />
+              </label>
+
               <label className="flex items-center justify-between cursor-pointer text-xs">
                 <span>Taper River Mouth (Broaden towards sea)</span>
                 <input
@@ -1287,6 +1599,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   className="accent-amber-700 rounded"
                 />
               </label>
+
               <label className="flex items-center justify-between cursor-pointer text-xs">
                 <span>Double-Line Road Border</span>
                 <input

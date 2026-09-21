@@ -44,7 +44,8 @@ export interface PlacedStamp {
   y: number;
   scale: number;
   rotation: number;     // in degrees
-  flipX: boolean;
+  flipX: boolean;       // Horizontal flip
+  flipY?: boolean;      // Vertical flip
   opacity: number;
   tint?: string;        // Optional tint hex color
   layer: number;        // Z-ordering: -5 to +5, with sub-sort by Y
@@ -64,6 +65,7 @@ export interface PlacedPath {
   points: PathPoint[];
   width: number;
   color: string;
+  textureId?: string;    // Custom texture id (from BiomeTexture/Shader Lab) or 'default'
   dashPattern?: number[]; // e.g. [] for solid, [8, 6] for dashed
   opacity: number;
   smoothed: boolean;
@@ -71,6 +73,7 @@ export interface PlacedPath {
   startWidth?: number;
   endWidth?: number;
   doubleLine?: boolean;  // Imperial double highway styling
+  restrictToLand?: boolean; // Restrict path/river to landmass (default: true)
 }
 
 export type TextBannerStyle = 'none' | 'box_simple' | 'parchment_ribbon' | 'stone_plaque' | 'royal_banner' | 'scroll';
@@ -183,6 +186,7 @@ export interface BrushSettings {
   elevation: number;      // in real meters (e.g. -15,000m to +15,000m)
   elevationConfig?: WorldElevationConfig;
   maskMode: MaskMode;
+  mode?: 'add' | 'subtract' | 'land' | 'ocean' | 'erase_land' | string;
   selectedBiome: string;  // BiomeTexture id
   coastlineRipples: number; // 0 to 4 ripples
   coastlineColor: string;
@@ -205,6 +209,10 @@ export interface BrushSettings {
   // Hydrological Drainage & River Routing
   riverSnapDrainage?: boolean; // Snap river to steepest-descent drainage basin
   riverCarveGorge?: boolean;   // Physically carve elevation gorge along river course
+  // Path & River specific
+  pathRestrictToLand?: boolean; // Restrict routes & rivers to landmass (default: true)
+  pathAutoMerge?: boolean;      // Auto-merge overlapping ends from city to city (default: true)
+  pathTextureId?: string;       // Chosen texture from Shader Lab & Biomes (default: 'default')
   // Stamp specific brush settings
   selectedStampId: string;
   stampPlacementMode: 'single' | 'scatter' | 'ribbon';
@@ -214,6 +222,9 @@ export interface BrushSettings {
   stampScale: number;
   stampOpacity?: number;  // 0.05 to 1.0 (default 1.0)
   stampRotation?: number; // 0 to 360 or -180 to 180 deg
+  stampFlipX?: boolean;   // Flip horizontally on placement
+  stampFlipY?: boolean;   // Flip vertically on placement
+  randomizeFlipX?: boolean; // Organic random left/right flipping
   randomizeRotation?: boolean;
   randomizeScale?: boolean;
   scaleVariance: number;  // 0 to 0.5
@@ -260,14 +271,65 @@ export interface MapProject {
   elevationConfig?: WorldElevationConfig;
 }
 
+export interface RenderContextOptions {
+  ctx: CanvasRenderingContext2D;
+  width: number;
+  height: number;
+  maskCanvas: HTMLCanvasElement;
+  textureCanvas: HTMLCanvasElement;
+  elevationCanvas: HTMLCanvasElement;
+  stamps: PlacedStamp[];
+  paths: PlacedPath[];
+  labels: PlacedText[];
+  customAssets?: StampAsset[];
+  layers: {
+    water: LayerState;
+    landmass: LayerState;
+    textures: LayerState;
+    elevation: LayerState;
+    stamps: LayerState;
+    paths: LayerState;
+    labels: LayerState;
+    grid: LayerState;
+    atmosphere?: LayerState;
+  };
+  grid: GridConfig;
+  atmosphere?: AtmosphereFilter;
+  waterDeepColor: string;
+  waterShallowColor: string;
+  coastlineRipples?: number;
+  coastlineColor?: string;
+  coastlineHatching?: boolean;
+  autoBeaching?: boolean;
+  showContourLines?: boolean;
+  contourInterval?: number;
+  topographicalView?: boolean;
+  elevationConfig?: WorldElevationConfig;
+  selectedStampId?: string | null;
+  selectedLabelId?: string | null;
+  selectedPathId?: string | null;
+  customBiomes?: BiomeTexture[];
+  activePathDraft?: {
+    points: { x: number; y: number }[];
+    color: string;
+    width: number;
+    style?: PathStyle;
+    textureId?: string;
+    restrictToLand?: boolean;
+    taper?: boolean;
+    doubleLine?: boolean;
+    dashPattern?: number[];
+  } | null;
+  referenceMap?: ReferenceMapConfig | null;
+  highResScale?: number;
+}
+
 export interface HistoryStep {
   description: string;
   timestamp: number;
-  // Synchronous raw ImageData for instant, zero-jitter, non-racing state restore
   maskImageData?: ImageData;
   textureImageData?: ImageData;
   elevationImageData?: ImageData;
-  // Canvas pixel data URLs as fallback
   maskDataUrl?: string;
   textureDataUrl?: string;
   elevationDataUrl?: string;
@@ -275,4 +337,5 @@ export interface HistoryStep {
   paths: PlacedPath[];
   labels: PlacedText[];
 }
+
 

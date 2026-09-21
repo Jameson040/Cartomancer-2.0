@@ -104,5 +104,7 @@ export const DEFAULT_BIOMES: BiomeTexture[] = [
   },
 ];
 
-// Built-in stamp assets array (testing SVGs removed per user request; populated by custom asset vault)
-export const DEFAULT_STAMP_ASSETS: StampAsset[] = [];
+import { loadDiscoveredStamps } from '../utils/dynamicAssetLoader';
+
+// Built-in stamp assets array auto-populated from /src/assets/stamps/ folder tree
+export const DEFAULT_STAMP_ASSETS: StampAsset[] = loadDiscoveredStamps();

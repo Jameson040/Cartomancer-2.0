@@ -184,6 +184,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
                 <div className="flex items-center gap-1">
                   {/* Visibility toggle */}
                   <button
+                    id={`btn-layer-visibility-${item.key}`}
                     onClick={() => onUpdateLayer(item.key, { visible: !state.visible })}
                     className={`p-1 rounded transition-colors ${
                       state.visible
@@ -197,6 +198,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 
                   {/* Lock toggle */}
                   <button
+                    id={`btn-layer-lock-${item.key}`}
                     onClick={() => onUpdateLayer(item.key, { locked: !state.locked })}
                     className={`p-1 rounded transition-colors ${
                       state.locked
@@ -214,6 +216,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
               <div className="flex items-center gap-2 pl-6">
                 <Sliders className="w-3 h-3 text-slate-400" />
                 <input
+                  id={`slider-layer-opacity-${item.key}`}
                   type="range"
                   min="0"
                   max="1"

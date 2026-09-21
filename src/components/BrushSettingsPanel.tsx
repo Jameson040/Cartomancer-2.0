@@ -23,6 +23,7 @@ import {
   PlusCircle,
   MinusCircle,
   FlipHorizontal,
+  FlipVertical,
   FolderPlus,
   Compass,
   Pipette,
@@ -177,9 +178,9 @@ export const BrushSettingsPanel: React.FC<BrushSettingsPanelProps> = ({
           {/* Mode toggle */}
           <div className="flex items-center bg-[#EFE5C9]/80 p-0.5 rounded-md border border-[#E2D6B5]">
             <button
-              onClick={() => onSettingsChange({ maskMode: 'add_land' as MaskMode })}
+              onClick={() => onSettingsChange({ maskMode: 'add_land' as MaskMode, mode: 'add' })}
               className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-all ${
-                settings.maskMode === 'add_land'
+                settings.maskMode === 'add_land' || settings.mode === 'add'
                   ? 'bg-[#05D5AA] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
@@ -188,9 +189,9 @@ export const BrushSettingsPanel: React.FC<BrushSettingsPanelProps> = ({
               <span>Add Land</span>
             </button>
             <button
-              onClick={() => onSettingsChange({ maskMode: 'carve_water' as MaskMode })}
+              onClick={() => onSettingsChange({ maskMode: 'carve_water' as MaskMode, mode: 'subtract' })}
               className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-all ${
-                settings.maskMode === 'carve_water'
+                settings.maskMode === 'carve_water' || settings.mode === 'subtract'
                   ? 'bg-[#00BBF9] text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
@@ -681,6 +682,36 @@ export const BrushSettingsPanel: React.FC<BrushSettingsPanelProps> = ({
             <span className="font-mono font-bold text-[#D9480F] text-xs w-8 text-right">
               {Math.round((settings.scaleVariance ?? 0.15) * 100)}%
             </span>
+          </div>
+
+          {/* Quick Flipping Toggles (Flip X / Flip Y) */}
+          <div className="flex items-center gap-1 pl-2 border-l border-[#E2D6B5]">
+            <button
+              id="btn-quick-flip-x"
+              onClick={() => onSettingsChange({ stampFlipX: !settings.stampFlipX })}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border transition-all cursor-pointer ${
+                settings.stampFlipX
+                  ? 'bg-[#00BBF9] text-white border-[#0096C7] shadow-xs'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-[#E2D6B5]'
+              }`}
+              title="Flip horizontally (Flip X)"
+            >
+              <FlipHorizontal className="w-3 h-3" />
+              <span>Flip X</span>
+            </button>
+            <button
+              id="btn-quick-flip-y"
+              onClick={() => onSettingsChange({ stampFlipY: !settings.stampFlipY })}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border transition-all cursor-pointer ${
+                settings.stampFlipY
+                  ? 'bg-[#00BBF9] text-white border-[#0096C7] shadow-xs'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-[#E2D6B5]'
+              }`}
+              title="Flip vertically (Flip Y)"
+            >
+              <FlipVertical className="w-3 h-3" />
+              <span>Flip Y</span>
+            </button>
           </div>
 
           {/* If Scatter Mode is active, show Scatter Density & Radius controls */}

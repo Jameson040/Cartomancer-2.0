@@ -180,10 +180,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           {isMenuOpen && (
             <div
               id="map-menu-popover"
-              className="absolute left-0 mt-2 w-80 sm:w-96 bg-[#FAF6EC] border-2 border-[#D5C69E] rounded-xl shadow-2xl py-2 z-50 text-slate-800 animate-in fade-in zoom-in-95 duration-150 divide-y divide-[#E2D6B5]"
+              className="absolute left-0 mt-2 w-80 sm:w-96 max-h-[calc(100vh-4.5rem)] flex flex-col bg-[#FAF6EC] border-2 border-[#D5C69E] rounded-xl shadow-2xl z-50 text-slate-800 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
             >
-              {/* Dropdown Header */}
-              <div className="px-4 py-2.5 bg-[#EFE5C9]/60 flex items-center justify-between">
+              {/* Dropdown Header - Pinned at top */}
+              <div className="px-4 py-2.5 bg-[#EFE5C9]/95 backdrop-blur-xs flex items-center justify-between shrink-0 border-b border-[#E2D6B5]">
                 <div>
                   <div className="font-serif font-bold text-xs text-slate-900 truncate max-w-[220px]">
                     {projectName || 'Untitled Realm'}
@@ -195,8 +195,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
 
-              {/* Section 1: File & Transfer (Import, Export, Save, Open) */}
-              <div className="p-1.5 space-y-0.5">
+              {/* Scrollable Dropdown Body */}
+              <div className="overflow-y-auto overscroll-contain flex-1 divide-y divide-[#E2D6B5] scrollbar-parchment py-1">
+                {/* Section 1: File & Transfer (Import, Export, Save, Open) */}
+                <div className="p-1.5 space-y-0.5">
                 <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   File & Transfer
                 </div>
@@ -492,7 +494,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
 
               {/* Section 3: Canvas Operations & Shortcuts */}
-              <div className="p-1.5 space-y-0.5">
+              <div className="p-1.5 space-y-0.5 pb-3">
                 <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Canvas & Help
                 </div>
@@ -541,7 +543,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               </div>
             </div>
-          )}
+          </div>
+        )}
         </div>
       </div>
 

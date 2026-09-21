@@ -101,6 +101,7 @@ export const AssetOutlinerModal: React.FC<AssetOutlinerModalProps> = ({
     stamps.forEach((s) => {
       const asset = assetMap.get(s.assetId);
       const category = asset?.category || 'custom';
+      const flipInfo = s.flipX && s.flipY ? ' • Flip: XY' : s.flipX ? ' • Flip: X' : s.flipY ? ' • Flip: Y' : '';
       list.push({
         id: s.id,
         rawType: 'stamp',
@@ -108,7 +109,7 @@ export const AssetOutlinerModal: React.FC<AssetOutlinerModalProps> = ({
         category,
         x: Math.round(s.x),
         y: Math.round(s.y),
-        details: `Scale: ${s.scale.toFixed(2)}x • Rot: ${Math.round(s.rotation)}°`,
+        details: `Scale: ${s.scale.toFixed(2)}x • Rot: ${Math.round(s.rotation)}°${flipInfo}`,
         svgData: asset?.svgData,
         isSelected: selectedStampId === s.id,
       });

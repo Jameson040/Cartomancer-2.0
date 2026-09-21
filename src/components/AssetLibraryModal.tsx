@@ -414,6 +414,24 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                 </button>
               </div>
 
+              {/* Dynamic Folder Discovery Status Banner */}
+              <div className="mb-4 p-3.5 rounded-xl bg-[#FDFBF7] border border-[#E2D6B5] flex items-start gap-3 shadow-xs">
+                <FolderOpen className="w-5 h-5 text-[#00BBF9] shrink-0 mt-0.5" />
+                <div className="flex-1 text-xs text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800">
+                      Permanent Folder Auto-Discovery Active
+                    </span>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      {DEFAULT_STAMP_ASSETS.length} Folder {DEFAULT_STAMP_ASSETS.length === 1 ? 'Asset' : 'Assets'} Loaded
+                    </span>
+                  </div>
+                  <p className="mt-1 text-slate-600 leading-relaxed">
+                    Any images dropped into <code className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-900 font-mono text-[11px]">/src/assets/stamps/&lt;category&gt;/</code> in the code editor's file explorer are automatically discovered and registered as permanent built-in stamps with zero code changes required.
+                  </p>
+                </div>
+              </div>
+
               {/* Hidden File and Folder Inputs */}
               <input
                 ref={fileInputRef}
@@ -763,9 +781,9 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                     </div>
 
                     <div className="flex items-start gap-2">
-                      <span className="font-bold text-[#FF7E5F] shrink-0">5. Project Workspace Placement (Optional):</span>
+                      <span className="font-bold text-[#FF7E5F] shrink-0">5. Permanent Folder Auto-Discovery (Zero Code):</span>
                       <span>
-                        If you are developing locally, you can also place asset image files into the project's <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[10px]">public/stamps/</code> folder and declare them in <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[10px]">src/data/defaultAssets.ts</code> to bundle them permanently into the codebase.
+                        Place any image files directly into the project's <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[10px]">/src/assets/stamps/&lt;category&gt;/</code> directory (e.g. <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[10px]">mountains/</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[10px]">trees/</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[10px]">castles/</code>). Cartomancer automatically indexes them, derives their names and categories, and bundles them permanently into the application without editing any code files.
                       </span>
                     </div>
                   </div>
