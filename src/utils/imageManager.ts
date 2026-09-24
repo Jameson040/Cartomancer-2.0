@@ -4,6 +4,7 @@
 
 import { DEFAULT_STAMP_ASSETS } from '../data/defaultAssets';
 import { StampAsset, StampCategory } from '../types';
+import { inferCategoryFromName } from './dynamicAssetLoader';
 
 class ImageManager {
   private imageCache: Map<string, HTMLImageElement> = new Map();
@@ -70,16 +71,7 @@ class ImageManager {
    * Intelligently infer an asset category from directory names or file names
    */
   public inferCategoryFromPath(pathOrName: string): StampCategory {
-    const s = pathOrName.toLowerCase();
-    if (/mountain|hill|peak|cliff|ridge|rock|cave|volcano/.test(s)) return 'mountains';
-    if (/tree|forest|wood|flora|plant|pine|oak|bush|jungle|willow|grove/.test(s)) return 'trees';
-    if (/settlement|city|cities|town|village|house|hamlet|farm|market|tavern/.test(s)) return 'settlements';
-    if (/castle|fortress|spire|tower|keep|citadel|palace|stronghold/.test(s)) return 'castles';
-    if (/wall|building|block|road|bridge|gate|fence|paved/.test(s)) return 'building_blocks';
-    if (/ship|boat|sea|maritime|ocean|anchor|kraken|vessel|harbor|dock|isle|island/.test(s)) return 'water_maritime';
-    if (/compass|banner|frame|cartouche|scroll|ribbon|border|badge|crest/.test(s)) return 'decorations';
-    if (/prop|chest|monster|relic|ruin|skull|dungeon|statue|altar|tent|camp/.test(s)) return 'nature_props';
-    return 'custom';
+    return inferCategoryFromName(pathOrName);
   }
 
   /**

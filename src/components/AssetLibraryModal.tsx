@@ -4,10 +4,11 @@
  * automatic category classification, and throttled non-blocking processing to prevent freezing.
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { StampAsset, StampCategory } from '../types';
 import { DEFAULT_STAMP_ASSETS } from '../data/defaultAssets';
 import { imageManager } from '../utils/imageManager';
+import { formatTitle } from '../utils/dynamicAssetLoader';
 import {
   X,
   Upload,
@@ -27,6 +28,8 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
+  HardDrive,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface AssetLibraryModalProps {
@@ -41,12 +44,17 @@ interface AssetLibraryModalProps {
   onClearAllCustomAssets?: () => void;
 }
 
-const CATEGORIES: { id: StampCategory | 'all'; label: string }[] = [
+const BASE_CATEGORIES: { id: StampCategory | 'all'; label: string }[] = [
   { id: 'all', label: 'All Assets' },
-  { id: 'mountains', label: 'Mountains & Hills' },
   { id: 'trees', label: 'Trees & Flora' },
-  { id: 'settlements', label: 'Cities & Villages' },
+  { id: 'swamps', label: 'Swamps & Marshes' },
+  { id: 'forts', label: 'Forts & Citadels' },
+  { id: 'lakes', label: 'Lakes & Water Bodies' },
+  { id: 'piers', label: 'Piers & Docks' },
+  { id: 'camping_carriage', label: 'Camping & Carriages' },
   { id: 'castles', label: 'Castles & Spires' },
+  { id: 'mountains', label: 'Mountains & Hills' },
+  { id: 'settlements', label: 'Cities & Villages' },
   { id: 'building_blocks', label: 'Building Blocks' },
   { id: 'nature_props', label: 'Dungeons & Props' },
   { id: 'water_maritime', label: 'Ships & Maritime' },
@@ -91,9 +99,61 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const packInputRef = useRef<HTMLInputElement>(null);
 
+  const [isPermanentizing, setIsPermanentizing] = useState(false);
+  const [permanentizeMsg, setPermanentizeMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const allAssets = useMemo(() => [...DEFAULT_STAMP_ASSETS, ...customAssets], [customAssets]);
+
+  const availableCategories = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of BASE_CATEGORIES) {
+      map.set(c.id, c.label);
+    }
+    for (const a of allAssets) {
+      if (a.category && !map.has(a.category)) {
+        map.set(a.category, formatTitle(a.category));
+      }
+    }
+    const list: { id: StampCategory | 'all'; label: string }[] = [];
+    for (const [id, label] of map.entries()) {
+      list.push({ id: id as StampCategory, label });
+    }
+    return list;
+  }, [allAssets]);
+
   if (!isOpen) return null;
 
-  const allAssets = [...DEFAULT_STAMP_ASSETS, ...customAssets];
+  // Turn uploaded custom vault assets into permanent files in src/assets/stamps/<category>/
+  const handlePermanentizeAssets = async () => {
+    if (customAssets.length === 0) return;
+    setIsPermanentizing(true);
+    setPermanentizeMsg(null);
+
+    try {
+      const response = await fetch('/api/permanentize-assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assets: customAssets }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        const catDetails = Object.entries(data.categories || {})
+          .map(([k, v]) => `${k} (${v})`)
+          .join(', ');
+        const successText = `Successfully placed ${data.savedCount} assets permanently into src/assets/stamps/! Categories: ${catDetails}`;
+        setPermanentizeMsg({ type: 'success', text: successText });
+        setUploadSuccessMsg(successText);
+      } else {
+        setPermanentizeMsg({ type: 'error', text: data.error || 'Server error occurred while saving.' });
+      }
+    } catch (err: any) {
+      console.error('Error permanentizing assets:', err);
+      setPermanentizeMsg({ type: 'error', text: `Failed to contact server: ${err.message}` });
+    } finally {
+      setIsPermanentizing(false);
+    }
+  };
 
   // Export custom vault as portable JSON pack
   const handleExportAssetPack = () => {
@@ -304,7 +364,7 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
             <span className="text-[11px] font-bold text-slate-500 tracking-wider uppercase px-2 mb-1">
               Asset Categories
             </span>
-            {CATEGORIES.map((cat) => {
+            {availableCategories.map((cat) => {
               const count =
                 cat.id === 'all'
                   ? allAssets.length
@@ -584,10 +644,15 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                       className="bg-white border border-[#E2D6B5] rounded-lg px-2.5 py-1 text-xs text-slate-800 focus:outline-none focus:border-[#00BBF9] cursor-pointer font-medium"
                     >
                       <option value="custom">General Custom</option>
-                      <option value="mountains">Mountains & Hills</option>
                       <option value="trees">Trees & Flora</option>
-                      <option value="settlements">Cities / Villages</option>
+                      <option value="swamps">Swamps & Marshes</option>
+                      <option value="forts">Forts & Citadels</option>
+                      <option value="lakes">Lakes & Water Bodies</option>
+                      <option value="piers">Piers & Docks</option>
+                      <option value="camping_carriage">Camping & Carriages</option>
                       <option value="castles">Castles & Spires</option>
+                      <option value="mountains">Mountains & Hills</option>
+                      <option value="settlements">Cities / Villages</option>
                       <option value="building_blocks">Building Blocks</option>
                       <option value="nature_props">Nature & Dungeons</option>
                       <option value="water_maritime">Ships & Maritime</option>
@@ -612,6 +677,80 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Permanentize Custom Assets to src/assets/stamps/ */}
+              {customAssets.length > 0 && (
+                <div className="mt-4 p-4 rounded-xl bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border-2 border-amber-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF7E5F] to-[#FEB47B] text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <HardDrive className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                        <span>Save to Permanent Categories (src/assets/stamps/)</span>
+                        <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-mono px-2 py-0.5 rounded-full font-bold">
+                          {customAssets.length} Ready
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-0.5 max-w-xl">
+                        Turn all your uploaded assets into permanent project files in <code className="bg-white/80 px-1 py-0.5 rounded font-mono text-[10px] border border-amber-200">src/assets/stamps/&lt;category&gt;/</code>. They will be auto-categorized by name (Trees, Swamps, Forts, Lakes, Piers, Camping, etc.) and permanently integrated.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={handlePermanentizeAssets}
+                      disabled={isPermanentizing}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#FF7E5F] to-[#D9480F] hover:from-[#f06d4e] hover:to-[#be3e0c] text-white font-bold rounded-lg text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                    >
+                      {isPermanentizing ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Saving Files...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                          <span>Save to Permanent Folders</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Permanentize status alert */}
+              {permanentizeMsg && (
+                <div
+                  className={`mt-2 p-3 rounded-xl border text-xs flex items-center justify-between ${
+                    permanentizeMsg.type === 'success'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-rose-50 border-rose-300 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {permanentizeMsg.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    )}
+                    <span>{permanentizeMsg.text}</span>
+                  </div>
+                  {permanentizeMsg.type === 'success' && onClearAllCustomAssets && (
+                    <button
+                      onClick={() => {
+                        onClearAllCustomAssets();
+                        setPermanentizeMsg(null);
+                      }}
+                      className="px-2.5 py-1 bg-white hover:bg-emerald-100 text-emerald-800 font-bold rounded border border-emerald-300 text-[11px] cursor-pointer"
+                      title="Clear custom uploads now that they exist as permanent assets"
+                    >
+                      Clear Uploads Vault (Now Built-in)
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Confirmation Banner for Clearing Custom Stamps */}
               {showConfirmClear && (
@@ -834,6 +973,27 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {selectedCategory === 'custom' && customAssets.length > 0 && (
+                    <button
+                      onClick={handlePermanentizeAssets}
+                      disabled={isPermanentizing}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#FF7E5F] to-[#D9480F] hover:from-[#f06d4e] hover:to-[#be3e0c] text-white font-bold rounded-lg text-xs shadow-xs transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                      title="Save all custom uploads permanently into src/assets/stamps/<category>/"
+                    >
+                      {isPermanentizing ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Saving...</span>
+                        </>
+                      ) : (
+                        <>
+                          <HardDrive className="w-3.5 h-3.5" />
+                          <span>Make Permanent ({customAssets.length})</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
                   {selectedCategory === 'custom' && (
                     <button
                       onClick={() => setCurrentView('import')}

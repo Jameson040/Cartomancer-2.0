@@ -20,11 +20,17 @@ export type StampCategory =
   | 'trees'
   | 'settlements'
   | 'castles'
+  | 'forts'
+  | 'swamps'
+  | 'lakes'
+  | 'piers'
+  | 'camping_carriage'
   | 'building_blocks'
   | 'nature_props'
   | 'water_maritime'
   | 'decorations'
-  | 'custom';
+  | 'custom'
+  | (string & {});
 
 export interface StampAsset {
   id: string;
