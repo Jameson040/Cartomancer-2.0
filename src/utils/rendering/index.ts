@@ -8,3 +8,4 @@ export * from './renderLabels';
 export * from './renderAtmosphere';
 export * from './renderGrid';
 export * from './renderExport';
+export * from './pathRibbon';

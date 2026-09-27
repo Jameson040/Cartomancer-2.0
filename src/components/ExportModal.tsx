@@ -367,17 +367,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <label className="text-xs font-bold text-[#D9480F] uppercase tracking-wider mb-2 block">
                 2. Output Resolution & Dimensions
               </label>
-              <div className="grid grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
                   {
                     scale: 1,
                     label: '1x Standard',
                     res: `${dimensions.width} x ${dimensions.height}`,
-                    note: 'Quick Share',
+                    note: 'Quick Web',
                   },
                   {
                     scale: 2,
-                    label: '2x High Definition',
+                    label: '2x High Def',
                     res: `${dimensions.width * 2} x ${dimensions.height * 2}`,
                     note: 'VTT & Screen',
                   },
@@ -385,7 +385,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     scale: 4,
                     label: '4x Ultra 4K',
                     res: `${dimensions.width * 4} x ${dimensions.height * 4}`,
-                    note: 'Poster Print',
+                    note: 'Tabletop Print',
+                  },
+                  {
+                    scale: 8,
+                    label: '8x Titan 8K',
+                    res: `${dimensions.width * 8} x ${dimensions.height * 8}`,
+                    note: 'Wall Poster',
                   },
                 ].map((res) => (
                   <button
@@ -398,8 +404,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     }`}
                   >
                     <div className="text-xs font-bold text-slate-800">{res.label}</div>
-                    <div className="text-[11px] font-mono text-[#00BBF9] font-bold mt-0.5">{res.res}</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">{res.note}</div>
+                    <div className="text-[10px] font-mono text-[#0077b6] font-bold mt-0.5">{res.res}</div>
+                    <div className="text-[9px] text-slate-500 mt-0.5">{res.note}</div>
                   </button>
                 ))}
               </div>

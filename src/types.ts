@@ -113,7 +113,7 @@ export interface BiomeTexture {
   name: string;
   color: string;
   roughnessColor: string;
-  detailType: 'grass' | 'sand' | 'snow' | 'rock' | 'water' | 'swamp' | 'volcanic' | 'parchment' | 'cobble' | 'custom_pattern';
+  detailType: 'grass' | 'sand' | 'snow' | 'rock' | 'water' | 'swamp' | 'volcanic' | 'parchment' | 'cobble' | 'cobblestone' | 'dirt' | 'paved' | 'custom_pattern';
   defaultElevation: number; // Suggested base elevation
   isPattern?: boolean;
   patternImageUrl?: string;

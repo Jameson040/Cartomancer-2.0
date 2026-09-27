@@ -28,7 +28,9 @@ export const HelpShortcutsModal: React.FC<HelpShortcutsModalProps> = ({ isOpen, 
     { key: 'Ctrl + S', desc: 'Save map project to disk (.cartomancer.json)' },
     { key: 'Ctrl + O', desc: 'Open and load saved map project' },
     { key: 'Space + Drag', desc: 'Pan canvas smoothly across the world map' },
-    { key: 'Scroll Wheel', desc: 'Zoom in and out dynamically' },
+    { key: 'Scroll Wheel', desc: 'Focal Zoom (stays locked right under your mouse cursor)' },
+    { key: 'Ctrl + / -', desc: 'Zoom In / Zoom Out' },
+    { key: 'Ctrl + 0', desc: 'Reset Zoom (Shift+0 to Fit Map to Screen)' },
     { key: 'Delete / Backspace', desc: 'Delete currently selected stamp or text' },
   ];
 

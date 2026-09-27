@@ -10,7 +10,7 @@ export interface LayerGroupState {
   paths: LayerState;
   labels: LayerState;
   grid: LayerState;
-  atmosphere?: LayerState;
+  atmosphere: LayerState;
   compass?: LayerState;
 }
 

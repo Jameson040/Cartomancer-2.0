@@ -43,6 +43,9 @@ interface NavbarProps {
   zoom: number;
   onZoomChange: (newZoom: number) => void;
   onResetZoom: () => void;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onFitToScreen?: () => void;
   topographicalView: boolean;
   onToggleTopographicalView: () => void;
   onOpenTemplates: () => void;
@@ -81,6 +84,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   zoom,
   onZoomChange,
   onResetZoom,
+  onZoomIn,
+  onZoomOut,
+  onFitToScreen,
   topographicalView,
   onToggleTopographicalView,
   onOpenTemplates,
@@ -612,9 +618,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="hidden lg:flex items-center bg-[#F4EBD0]/80 px-1 py-0.5 rounded-lg border border-[#E2D6B5] text-xs text-slate-700">
           <button
             id="btn-zoom-out"
-            onClick={() => onZoomChange(Math.max(0.2, zoom - 0.15))}
+            onClick={onZoomOut ? onZoomOut : () => onZoomChange(Math.max(0.15, +(zoom - 0.15).toFixed(2)))}
             className="p-1 hover:text-[#00BBF9] hover:bg-white rounded transition-colors"
-            title="Zoom Out"
+            title="Zoom Out (Ctrl+-)"
           >
             <ZoomOut className="w-3.5 h-3.5" />
           </button>
@@ -628,15 +634,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
           <button
             id="btn-zoom-in"
-            onClick={() => onZoomChange(Math.min(3.5, zoom + 0.15))}
+            onClick={onZoomIn ? onZoomIn : () => onZoomChange(Math.min(5.0, +(zoom + 0.15).toFixed(2)))}
             className="p-1 hover:text-[#00BBF9] hover:bg-white rounded transition-colors"
-            title="Zoom In"
+            title="Zoom In (Ctrl++)"
           >
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
           <button
             id="btn-zoom-fit"
-            onClick={onResetZoom}
+            onClick={onFitToScreen ? onFitToScreen : onResetZoom}
             className="p-1 hover:text-[#00BBF9] hover:bg-white rounded transition-colors ml-0.5"
             title="Fit to Screen"
           >

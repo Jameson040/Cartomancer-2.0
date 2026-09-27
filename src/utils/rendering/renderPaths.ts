@@ -4,6 +4,7 @@
 import { PlacedPath, PathStyle, BiomeTexture } from '../../types';
 import { DEFAULT_BIOMES } from '../../data/defaultAssets';
 import { BiomePatternManager } from './renderBiomes';
+import { buildRibbonRails, traceRibbonPolygon, strokeRibbonEdges, RibbonRails } from './pathRibbon';
 
 export function strokeSmoothPath(
   ctx: CanvasRenderingContext2D,
@@ -85,6 +86,21 @@ export function renderPaths(
     biomeMap.set(b.id, b);
   }
 
+  // Pre-calculate Ribbon Rails for all tapered/width-varying paths (reused across Pass 1, 2, and 3)
+  const ribbonMap = new Map<string, RibbonRails>();
+  for (const p of allPaths) {
+    if (p.taper && p.points.length > 2) {
+      const startW = p.startWidth ?? Math.max(1.5, p.width * 0.35);
+      const endW = p.endWidth ?? Math.max(p.width, p.width * 1.6);
+      const rails = buildRibbonRails(p.points, {
+        startWidth: startW,
+        endWidth: endW,
+        organicVariation: p.style === 'road',
+      });
+      ribbonMap.set(p.id, rails);
+    }
+  }
+
   // PASS 1: All Road Casings & River Bank Outlines
   for (const p of allPaths) {
     if (p.points.length < 2) continue;
@@ -94,33 +110,29 @@ export function renderPaths(
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    const riverBankColor = (p.textureId && p.textureId !== 'default' && biomeMap.has(p.textureId))
-      ? (biomeMap.get(p.textureId)!.roughnessColor || '#1c1917')
-      : '#1e3a8a';
+    const defaultCasingColor = p.style === 'river' ? '#1e3a8a' : '#292524';
+    const casingColor = (p.textureId && p.textureId !== 'default' && biomeMap.has(p.textureId))
+      ? (biomeMap.get(p.textureId)!.roughnessColor || defaultCasingColor)
+      : defaultCasingColor;
+
+    const rails = ribbonMap.get(p.id);
 
     if (p.doubleLine) {
       ctx.lineWidth = p.width + 4;
       ctx.strokeStyle = '#1c1917';
       strokeSmoothPath(ctx, p.points, p.smoothed);
-    } else if (p.taper && p.points.length > 2) {
-      if (p.style === 'river') {
-        const startW = p.startWidth ?? Math.max(1.5, p.width * 0.35);
-        const endW = p.endWidth ?? Math.max(p.width, p.width * 1.6);
-        const numSegments = p.points.length - 1;
-        ctx.strokeStyle = riverBankColor;
-        for (let i = 0; i < numSegments; i++) {
-          const segProgress = i / numSegments;
-          const segW = startW + (endW - startW) * segProgress;
-          ctx.lineWidth = segW + 2.5;
-          ctx.beginPath();
-          ctx.moveTo(p.points[i].x, p.points[i].y);
-          ctx.lineTo(p.points[i + 1].x, p.points[i + 1].y);
-          ctx.stroke();
-        }
-      }
+    } else if (rails) {
+      // Offset-polygon dual-rail bank/casing
+      ctx.strokeStyle = casingColor;
+      strokeRibbonEdges(ctx, rails, 2.5);
     } else if (p.style === 'river') {
-      ctx.lineWidth = p.width + 2;
-      ctx.strokeStyle = riverBankColor;
+      ctx.lineWidth = p.width + 2.5;
+      ctx.strokeStyle = casingColor;
+      strokeSmoothPath(ctx, p.points, p.smoothed);
+    } else if (p.style === 'road') {
+      // Single-line road under-casing (ditch / cart track border)
+      ctx.lineWidth = p.width + 3;
+      ctx.strokeStyle = casingColor;
       strokeSmoothPath(ctx, p.points, p.smoothed);
     }
 
@@ -147,24 +159,17 @@ export function renderPaths(
       }
     }
 
+    const rails = ribbonMap.get(p.id);
+
     if (p.doubleLine) {
       ctx.lineWidth = p.width;
       ctx.strokeStyle = strokeStyle;
       strokeSmoothPath(ctx, p.points, p.smoothed);
-    } else if (p.taper && p.points.length > 2) {
-      const startW = p.startWidth ?? Math.max(1.5, p.width * 0.35);
-      const endW = p.endWidth ?? Math.max(p.width, p.width * 1.6);
-      const numSegments = p.points.length - 1;
-      ctx.strokeStyle = strokeStyle;
-      for (let i = 0; i < numSegments; i++) {
-        const segProgress = i / numSegments;
-        const segW = startW + (endW - startW) * segProgress;
-        ctx.lineWidth = segW;
-        ctx.beginPath();
-        ctx.moveTo(p.points[i].x, p.points[i].y);
-        ctx.lineTo(p.points[i + 1].x, p.points[i + 1].y);
-        ctx.stroke();
-      }
+    } else if (rails) {
+      // Seamless closed polygon ribbon fill (no stepped disks or line join gaps)
+      traceRibbonPolygon(ctx, rails);
+      ctx.fillStyle = strokeStyle;
+      ctx.fill();
     } else {
       ctx.lineWidth = p.width;
       ctx.strokeStyle = strokeStyle;
@@ -202,20 +207,11 @@ export function renderPaths(
       ctx.setLineDash([5, 6]);
       strokeSmoothPath(ctx, p.points, p.smoothed);
     } else if (p.style === 'river' && !isCustomNonWater) {
-      if (p.taper && p.points.length > 2) {
-        const startW = p.startWidth ?? Math.max(1.5, p.width * 0.35);
-        const endW = p.endWidth ?? Math.max(p.width, p.width * 1.6);
-        const numSegments = p.points.length - 1;
+      const rails = ribbonMap.get(p.id);
+      if (rails) {
+        ctx.lineWidth = Math.max(1.2, p.width * 0.22);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-        for (let i = 0; i < numSegments; i++) {
-          const segProgress = i / numSegments;
-          const segW = (startW + (endW - startW) * segProgress) * 0.35;
-          ctx.lineWidth = Math.max(1, segW);
-          ctx.beginPath();
-          ctx.moveTo(p.points[i].x, p.points[i].y);
-          ctx.lineTo(p.points[i + 1].x, p.points[i + 1].y);
-          ctx.stroke();
-        }
+        strokeSmoothPath(ctx, p.points, p.smoothed);
       } else {
         ctx.lineWidth = Math.max(1.5, p.width * 0.35);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
@@ -231,10 +227,17 @@ export function renderPaths(
     const selectedP = allPaths.find((p) => p.id === selectedPathId);
     if (selectedP && selectedP.points.length >= 2) {
       ctx.save();
-      ctx.lineWidth = Math.max(4, selectedP.width + 6);
-      ctx.strokeStyle = '#f59e0b';
-      ctx.setLineDash([6, 6]);
-      strokeSmoothPath(ctx, selectedP.points, selectedP.smoothed);
+      const rails = ribbonMap.get(selectedP.id);
+      if (rails) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.setLineDash([6, 6]);
+        strokeRibbonEdges(ctx, rails, 3);
+      } else {
+        ctx.lineWidth = Math.max(4, selectedP.width + 6);
+        ctx.strokeStyle = '#f59e0b';
+        ctx.setLineDash([6, 6]);
+        strokeSmoothPath(ctx, selectedP.points, selectedP.smoothed);
+      }
       ctx.restore();
     }
   }

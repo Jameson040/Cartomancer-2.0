@@ -4,6 +4,25 @@
 import { BiomeTexture } from '../../types';
 import { imageManager } from '../imageManager';
 
+function shadeColor(hex: string, factor: number): string {
+  const c = hex.replace('#', '');
+  if (c.length !== 6) return hex;
+  const r = Math.min(255, Math.max(0, Math.round(parseInt(c.substring(0, 2), 16) * factor)));
+  const g = Math.min(255, Math.max(0, Math.round(parseInt(c.substring(2, 4), 16) * factor)));
+  const b = Math.min(255, Math.max(0, Math.round(parseInt(c.substring(4, 6), 16) * factor)));
+  return `rgb(${r},${g},${b})`;
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 export class BiomePatternManager {
   private static patternCache = new Map<string, CanvasPattern>();
 
@@ -82,45 +101,137 @@ export class BiomePatternManager {
     const roughColor = biome.roughnessColor || '#585552';
 
     switch (biome.detailType) {
-      case 'cobble': {
-        tCtx.strokeStyle = roughColor;
-        tCtx.lineWidth = 1.5;
-        const rows = [
-          [{ x: 0, w: 20 }, { x: 20, w: 24 }, { x: 44, w: 20 }],
-          [{ x: 0, w: 32 }, { x: 32, w: 32 }],
-          [{ x: 0, w: 22 }, { x: 22, w: 26 }, { x: 48, w: 16 }],
-          [{ x: 0, w: 16 }, { x: 16, w: 30 }, { x: 46, w: 18 }],
+      case 'dirt': {
+        // Base earthy dirt fill
+        tCtx.fillStyle = biome.color || '#8b6f47';
+        tCtx.fillRect(0, 0, 64, 64);
+
+        // Speckle noise — darker + lighter soil flecks
+        for (let i = 0; i < 90; i++) {
+          const sx = (i * 17 + (i % 7) * 5) % 64;
+          const sy = (i * 23 + (i % 5) * 7) % 64;
+          const r = (i % 3) * 0.5 + 0.6;
+          const lighter = i % 2 === 0;
+          tCtx.fillStyle = lighter ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.22)';
+          tCtx.beginPath();
+          tCtx.arc(sx, sy, r, 0, Math.PI * 2);
+          tCtx.fill();
+        }
+
+        // Small embedded pebbles
+        const pebbleCoords = [
+          { x: 12, y: 16, rx: 2.5, ry: 1.8, rot: 0.3 },
+          { x: 38, y: 10, rx: 3.0, ry: 2.0, rot: -0.4 },
+          { x: 52, y: 44, rx: 2.2, ry: 1.5, rot: 0.8 },
+          { x: 22, y: 48, rx: 3.2, ry: 2.2, rot: 0.2 },
+          { x: 44, y: 32, rx: 2.0, ry: 1.6, rot: -0.7 },
         ];
-        const rowH = 16;
-        for (let r = 0; r < rows.length; r++) {
-          const y = r * rowH;
-          for (const stone of rows[r]) {
-            tCtx.fillStyle = roughColor;
-            tCtx.globalAlpha = 0.25;
-            tCtx.fillRect(stone.x + 1, y + 1, stone.w - 2, rowH - 2);
-            tCtx.globalAlpha = 1.0;
-            tCtx.strokeRect(stone.x + 1, y + 1, stone.w - 2, rowH - 2);
-            tCtx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-            tCtx.fillRect(stone.x + 2, y + 2, stone.w - 4, 2);
+        for (const pb of pebbleCoords) {
+          tCtx.fillStyle = 'rgba(40, 28, 18, 0.45)';
+          tCtx.beginPath();
+          tCtx.ellipse(pb.x, pb.y, pb.rx, pb.ry, pb.rot, 0, Math.PI * 2);
+          tCtx.fill();
+          tCtx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+          tCtx.beginPath();
+          tCtx.ellipse(pb.x - 0.5, pb.y - 0.5, pb.rx * 0.6, pb.ry * 0.6, pb.rot, 0, Math.PI * 2);
+          tCtx.fill();
+        }
+        break;
+      }
+      case 'cobble':
+      case 'cobblestone': {
+        // Mortar base background
+        tCtx.fillStyle = roughColor || '#3f3f3f';
+        tCtx.fillRect(0, 0, 64, 64);
+
+        const stoneSize = 16;
+        const rows = Math.ceil(64 / stoneSize) + 1;
+        const baseColor = biome.color || '#8a8a8a';
+
+        for (let row = -1; row < rows; row++) {
+          const offset = row % 2 === 0 ? 0 : stoneSize / 2;
+          for (let col = -1; col * stoneSize + offset < 64 + stoneSize; col++) {
+            const x = col * stoneSize + offset + 1;
+            const y = row * stoneSize + 1;
+            const w = stoneSize - 2.5;
+            const h = stoneSize - 2.5;
+
+            // Deterministic pseudo-random variation based on cell
+            const hash = Math.sin((row + 5) * 31.1 + (col + 5) * 17.7) * 43758.5453;
+            const shadeFactor = 0.78 + (Math.abs(hash) % 1) * 0.38;
+
+            tCtx.fillStyle = shadeColor(baseColor, shadeFactor);
+            roundRect(tCtx, x, y, w, h, 2.5);
+            tCtx.fill();
+
+            // Top-left highlight rim
+            tCtx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
+            tCtx.lineWidth = 1;
+            tCtx.beginPath();
+            tCtx.moveTo(x + 2, y + h - 1);
+            tCtx.lineTo(x + 2, y + 2);
+            tCtx.lineTo(x + w - 2, y + 2);
+            tCtx.stroke();
+
+            // Bottom-right shadow rim
+            tCtx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+            tCtx.beginPath();
+            tCtx.moveTo(x + w - 1, y + 2);
+            tCtx.lineTo(x + w - 1, y + h - 1);
+            tCtx.lineTo(x + 2, y + h - 1);
+            tCtx.stroke();
           }
         }
         break;
       }
+      case 'paved': {
+        // Solid masonry base
+        tCtx.fillStyle = biome.color || '#5a5a5a';
+        tCtx.fillRect(0, 0, 64, 64);
+
+        // Asphalt / stone grain
+        for (let i = 0; i < 110; i++) {
+          const gx = (i * 29) % 64;
+          const gy = (i * 37) % 64;
+          tCtx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.12)';
+          tCtx.fillRect(gx, gy, 1, 1);
+        }
+
+        // Paved flagstone slab joint lines
+        tCtx.strokeStyle = roughColor || 'rgba(0,0,0,0.22)';
+        tCtx.lineWidth = 1;
+        tCtx.beginPath();
+        tCtx.moveTo(0, 32);
+        tCtx.lineTo(64, 32);
+        tCtx.moveTo(32, 0);
+        tCtx.lineTo(32, 32);
+        tCtx.moveTo(48, 32);
+        tCtx.lineTo(48, 64);
+        tCtx.stroke();
+        break;
+      }
       case 'water': {
-        tCtx.strokeStyle = roughColor;
-        tCtx.lineWidth = 2;
-        tCtx.globalAlpha = 0.6;
-        for (let y = 6; y < 64; y += 12) {
+        const grad = tCtx.createLinearGradient(0, 0, 0, 64);
+        grad.addColorStop(0, biome.color || '#2b70b8');
+        grad.addColorStop(1, shadeColor(biome.color || '#2b70b8', 0.78));
+        tCtx.fillStyle = grad;
+        tCtx.fillRect(0, 0, 64, 64);
+
+        // Subtle undulating water waves
+        tCtx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        tCtx.lineWidth = 1.5;
+        for (let y = 8; y < 64; y += 14) {
           tCtx.beginPath();
           tCtx.moveTo(0, y);
-          tCtx.bezierCurveTo(16, y - 4, 32, y + 4, 48, y - 3);
+          tCtx.bezierCurveTo(16, y - 3, 32, y + 3, 48, y - 2);
           tCtx.bezierCurveTo(56, y + 2, 60, y - 1, 64, y);
           tCtx.stroke();
         }
-        tCtx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-        tCtx.fillRect(14, 18, 4, 1.5);
-        tCtx.fillRect(42, 34, 5, 1.5);
-        tCtx.fillRect(26, 50, 4, 1.5);
+
+        tCtx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        tCtx.fillRect(14, 16, 5, 1);
+        tCtx.fillRect(42, 30, 6, 1);
+        tCtx.fillRect(24, 46, 5, 1);
         break;
       }
       case 'sand': {

@@ -60,11 +60,39 @@ class ImageManager {
   }
 
   /**
-   * Preload all standard assets for instant, buttery-smooth painting & stamping
+   * Preload initial starter assets immediately, then progressively load remaining in background idle chunks
    */
   public async preloadDefaultAssets(customAssets: StampAsset[] = []): Promise<void> {
     const all = [...DEFAULT_STAMP_ASSETS, ...customAssets];
-    await Promise.allSettled(all.map((a) => this.loadAsset(a)));
+    if (all.length === 0) return;
+
+    // 1. Preload first priority batch (16 assets) immediately for instant first-render response
+    const priority = all.slice(0, 16);
+    await Promise.allSettled(priority.map((a) => this.loadAsset(a)));
+
+    // 2. Background queue for remaining assets in non-blocking chunks of 6
+    const remaining = all.slice(16);
+    if (remaining.length === 0) return;
+
+    let index = 0;
+    const loadNextChunk = () => {
+      if (index >= remaining.length) return;
+      const chunk = remaining.slice(index, index + 6);
+      index += 6;
+      Promise.allSettled(chunk.map((a) => this.loadAsset(a))).then(() => {
+        if ('requestIdleCallback' in window) {
+          (window as any).requestIdleCallback(loadNextChunk, { timeout: 800 });
+        } else {
+          setTimeout(loadNextChunk, 120);
+        }
+      });
+    };
+
+    if ('requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(loadNextChunk, { timeout: 500 });
+    } else {
+      setTimeout(loadNextChunk, 100);
+    }
   }
 
   /**

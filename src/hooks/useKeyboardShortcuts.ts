@@ -12,6 +12,10 @@ interface UseKeyboardShortcutsProps {
   onClearSelection: () => void;
   onFlipSelectedX?: () => void;
   onFlipSelectedY?: () => void;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onResetZoom?: () => void;
+  onFitToScreen?: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -25,6 +29,10 @@ export function useKeyboardShortcuts({
   onClearSelection,
   onFlipSelectedX,
   onFlipSelectedY,
+  onZoomIn,
+  onZoomOut,
+  onResetZoom,
+  onFitToScreen,
 }: UseKeyboardShortcutsProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -37,6 +45,29 @@ export function useKeyboardShortcuts({
           target.isContentEditable)
       ) {
         return;
+      }
+
+      // Zoom hotkeys: Ctrl/Cmd + (+ / - / 0)
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          onZoomIn?.();
+          return;
+        }
+        if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          onZoomOut?.();
+          return;
+        }
+        if (e.key === '0') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            onFitToScreen?.();
+          } else {
+            onResetZoom?.();
+          }
+          return;
+        }
       }
 
       // Undo / Redo

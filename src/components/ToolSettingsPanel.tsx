@@ -42,7 +42,7 @@ import {
   PathStyle,
   BiomeTexture,
 } from '../types';
-import { DEFAULT_BIOMES } from '../data/defaultAssets';
+import { DEFAULT_BIOMES, DEFAULT_STAMP_ASSETS } from '../data/defaultAssets';
 
 interface ToolSettingsPanelProps {
   activeTool: ToolType;
@@ -741,7 +741,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] text-slate-600">Style / Type:</span>
-                  <span className="font-bold capitalize text-slate-800">{selectedPath.style || selectedPath.type}</span>
+                  <span className="font-bold capitalize text-slate-800">{selectedPath.style}</span>
                 </div>
                 {/* Stroke Width Slider */}
                 <div className="flex flex-col gap-1">
@@ -1144,6 +1144,49 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </button>
             </div>
 
+            {/* Quick Category Stamp Shelf (Instant variation switching with 0 modal opens) */}
+            {(() => {
+              const curCat = selectedStampAsset?.category || 'trees';
+              const variations = DEFAULT_STAMP_ASSETS.filter((a) => a.category === curCat).slice(0, 10);
+              if (variations.length <= 1) return null;
+              return (
+                <div className="flex flex-col gap-1.5 p-2 bg-white/70 rounded-xl border border-[#E2D6B5]">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="font-semibold text-slate-700 capitalize">
+                      Quick {curCat.replace('_', ' ')} Variations
+                    </span>
+                    <span className="text-slate-400 font-mono">{variations.length} available</span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {variations.map((v) => {
+                      const isCur = selectedStampAsset?.id === v.id;
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          onClick={() => onUpdateBrushSettings({ selectedStampId: v.id })}
+                          className={`w-9 h-9 rounded-lg p-1 border flex items-center justify-center transition-all cursor-pointer ${
+                            isCur
+                              ? 'bg-amber-100 border-amber-600 ring-2 ring-amber-400 shadow-xs'
+                              : 'bg-white border-[#E2D6B5] hover:border-amber-400 hover:bg-amber-50/50'
+                          }`}
+                          title={v.name}
+                        >
+                          <img
+                            src={v.imageUrl}
+                            alt={v.name}
+                            loading="lazy"
+                            decoding="async"
+                            className="max-w-full max-h-full object-contain pointer-events-none"
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Placement Mode */}
             <div className="flex flex-col gap-1.5">
               <span className="font-semibold text-slate-800 text-[11px]">Placement Method</span>
@@ -1388,34 +1431,43 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
 
             {/* Path Type */}
             <div className="flex flex-col gap-1.5">
-              <span className="font-semibold text-slate-800 text-[11px]">Path Type</span>
+              <span className="font-semibold text-slate-800 text-[11px]">Route & Waterway Presets</span>
               <div className="grid grid-cols-2 gap-1.5">
                 {[
-                  { id: 'river', label: 'Water River', color: '#2b6cb0', defaultTaper: true, defaultDouble: false },
-                  { id: 'road', label: 'Cart Road', color: '#92400e', defaultTaper: false, defaultDouble: true },
-                  { id: 'border', label: 'Empire Border', color: '#dc2626', defaultTaper: false, defaultDouble: false },
-                  { id: 'coastal', label: 'Coast Route', color: '#0f766e', defaultTaper: false, defaultDouble: false },
-                ].map((p) => {
-                  const isSelected = activePathStyle === p.id || brushSettings.pathType === p.id;
+                  { id: 'river', label: 'Natural River', textureId: 'river_water', color: '#2f7bc9', width: 8, defaultTaper: true, defaultDouble: false },
+                  { id: 'road', label: 'Dirt Cart Track', textureId: 'dirt_road', color: '#8b6f47', width: 10, defaultTaper: false, defaultDouble: false },
+                  { id: 'road', label: 'Cobblestone Road', textureId: 'cobblestone_road', color: '#8a8a8a', width: 14, defaultTaper: false, defaultDouble: true },
+                  { id: 'road', label: 'Paved Stone Way', textureId: 'paved_road', color: '#5a5a5a', width: 16, defaultTaper: false, defaultDouble: true },
+                  { id: 'border', label: 'Empire Border', textureId: 'default', color: '#dc2626', width: 3, defaultTaper: false, defaultDouble: false },
+                  { id: 'trade_route', label: 'Caravan Route', textureId: 'dirt_road', color: '#b45309', width: 4, defaultTaper: false, defaultDouble: false },
+                ].map((p, idx) => {
+                  const isSelected =
+                    activePathStyle === p.id &&
+                    (p.textureId === 'default' ? pathTextureId === 'default' : pathTextureId === p.textureId);
                   return (
                     <button
-                      key={p.id}
+                      key={`${p.id}_${p.textureId}_${idx}`}
                       onClick={() => {
                         const style = p.id as PathStyle;
                         onPathStyleChange?.(style);
-                        onUpdateBrushSettings({ pathType: style as any });
                         onPathColorChange(p.color);
                         onPathTaperChange(p.defaultTaper);
                         onPathDoubleLineChange(p.defaultDouble);
+                        if (p.textureId && onPathTextureIdChange) {
+                          onPathTextureIdChange(p.textureId);
+                        }
+                        if (p.width && onPathWidthChange) {
+                          onPathWidthChange(p.width);
+                        }
                       }}
-                      className={`py-2 rounded-lg font-medium border text-center transition-all cursor-pointer text-xs flex items-center justify-center gap-1.5 ${
+                      className={`py-2 px-1.5 rounded-lg font-medium border text-center transition-all cursor-pointer text-xs flex items-center justify-start gap-2 ${
                         isSelected
                           ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs ring-1 ring-amber-500'
                           : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
                       }`}
                     >
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
-                      {p.label}
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                      <span className="truncate text-[11px]">{p.label}</span>
                     </button>
                   );
                 })}

@@ -102,6 +102,38 @@ export const DEFAULT_BIOMES: BiomeTexture[] = [
     detailType: 'sand',
     defaultElevation: 45,
   },
+  {
+    id: 'dirt_road',
+    name: 'Dirt Trail / Cart Track',
+    color: '#8b6f47',
+    roughnessColor: '#5c4630',
+    detailType: 'dirt',
+    defaultElevation: 12,
+  },
+  {
+    id: 'cobblestone_road',
+    name: 'Cobblestone Road',
+    color: '#8a8a8a',
+    roughnessColor: '#3f3f3f',
+    detailType: 'cobblestone',
+    defaultElevation: 15,
+  },
+  {
+    id: 'paved_road',
+    name: 'Paved Stone Highway',
+    color: '#5a5a5a',
+    roughnessColor: '#2b2b2b',
+    detailType: 'paved',
+    defaultElevation: 16,
+  },
+  {
+    id: 'river_water',
+    name: 'River Stream',
+    color: '#2f7bc9',
+    roughnessColor: '#123a5e',
+    detailType: 'water',
+    defaultElevation: -2,
+  },
 ];
 
 import { loadDiscoveredStamps } from '../utils/dynamicAssetLoader';

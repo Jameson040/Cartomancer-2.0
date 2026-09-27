@@ -91,6 +91,11 @@ export default function App() {
 
   const [atmosphere, setAtmosphere] = useState<AtmosphereFilter>({
     preset: 'vintage_parchment',
+    timeOfDay: 'golden_hour',
+    lightIntensity: 0.8,
+    seasonFill: 'none',
+    seasonDensity: 0.5,
+    seasonParticleSize: 2,
     vignette: 0.35,
     warmth: 0.1,
     contrast: 1.05,
@@ -128,7 +133,7 @@ export default function App() {
     eraserTarget: 'all',
     pathRestrictToLand: true,
     pathAutoMerge: true,
-    pathTextureId: 'default',
+    pathTextureId: 'river_water',
   });
 
   // Path Tool specific
@@ -137,7 +142,7 @@ export default function App() {
   const [pathColor, setPathColor] = useState('#38bdf8');
   const [pathTaper, setPathTaper] = useState(true);
   const [pathDoubleLine, setPathDoubleLine] = useState(false);
-  const [pathTextureId, setPathTextureId] = useState<string>('default');
+  const [pathTextureId, setPathTextureId] = useState<string>('river_water');
   const [pathRestrictToLand, setPathRestrictToLand] = useState<boolean>(true);
   const [pathAutoMerge, setPathAutoMerge] = useState<boolean>(true);
 
@@ -305,9 +310,14 @@ export default function App() {
     setPanStart,
     cursorPos,
     setCursorPos,
+    isSpacePressed,
     getCanvasCoords,
+    zoomTo,
+    zoomIn,
+    zoomOut,
     resetZoom,
-  } = useViewport({ dimensions, mainCanvasRef });
+    fitToScreen,
+  } = useViewport({ dimensions, mainCanvasRef, viewportRef });
 
   // --- 3. Map History Hook ---
   const {
@@ -1089,11 +1099,15 @@ export default function App() {
     onClearSelection: handleClearSelection,
     onFlipSelectedX: handleFlipSelectedStampX,
     onFlipSelectedY: handleFlipSelectedStampY,
+    onZoomIn: zoomIn,
+    onZoomOut: zoomOut,
+    onResetZoom: resetZoom,
+    onFitToScreen: fitToScreen,
   });
 
   // --- Mouse & Pointer Events ---
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button === 1 || e.spaceKey || e.altKey) {
+    if (e.button === 1 || e.altKey || isSpacePressed) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
       return;
@@ -1443,12 +1457,6 @@ export default function App() {
     }
   };
 
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const zoomDelta = e.deltaY < 0 ? 0.1 : -0.1;
-    setZoom((prev) => Math.max(0.2, Math.min(3.5, prev + zoomDelta)));
-  };
-
   // --- High-Resolution & Heightmap Export ---
   const handlePerformExport = async (
     scaleFactor: number,
@@ -1556,8 +1564,11 @@ export default function App() {
         onUndo={handleUndo}
         onRedo={handleRedo}
         zoom={zoom}
-        onZoomChange={setZoom}
+        onZoomChange={(newZ) => zoomTo(newZ)}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
         onResetZoom={resetZoom}
+        onFitToScreen={fitToScreen}
         topographicalView={topographicalView}
         onToggleTopographicalView={() => setTopographicalView(!topographicalView)}
         onOpenTemplates={() => setIsTemplatesModalOpen(true)}
@@ -1656,7 +1667,7 @@ export default function App() {
             textCurvature={textCurvature}
             onTextCurvatureChange={setTextCurvature}
             textPresetStyle={textPresetStyle}
-            onTextPresetStyleChange={setTextPresetStyle}
+            onTextPresetStyleChange={(style) => setTextPresetStyle(style as TextPresetStyle)}
             onHydraulicErosion={handleHydraulicErosion}
             activeBiome={activeBiome}
             onSelectBiome={(biome) => setBrushSettings((prev) => ({ ...prev, selectedBiome: biome }))}
@@ -1669,7 +1680,11 @@ export default function App() {
           ref={viewportRef}
           id="map-viewport"
           className={`flex-1 bg-[#F4EBD0]/40 overflow-hidden relative ${
-            activeTool === 'select'
+            isPanning
+              ? 'cursor-grabbing'
+              : isSpacePressed
+              ? 'cursor-grab'
+              : activeTool === 'select'
               ? 'cursor-default'
               : activeTool === 'text'
               ? 'cursor-text'
@@ -1678,13 +1693,13 @@ export default function App() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onWheel={handleWheel}
         >
           <div
             id="map-stage"
-            className="absolute origin-top-left transition-transform duration-75 ease-out shadow-2xl"
+            className="absolute origin-top-left shadow-2xl select-none"
             style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transform: `translate3d(${pan.x}px, ${pan.y}px, 0px) scale(${zoom})`,
+              willChange: 'transform',
               width: dimensions.width,
               height: dimensions.height,
             }}

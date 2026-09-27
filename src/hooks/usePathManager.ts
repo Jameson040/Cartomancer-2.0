@@ -18,7 +18,7 @@ export function usePathManager({
   const [paths, setPathsState] = useState<PlacedPath[]>(initialPaths);
   const pathsRef = useRef<PlacedPath[]>(paths);
   const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
-  const [activePathDraft, setActivePathDraft] = useState<PlacedPath | null>(null);
+  const [activePathDraft, setActivePathDraft] = useState<any | null>(null);
 
   useEffect(() => {
     pathsRef.current = paths;

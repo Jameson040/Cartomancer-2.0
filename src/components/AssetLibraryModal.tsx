@@ -85,6 +85,12 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
   const [uploadSuccessMsg, setUploadSuccessMsg] = useState('');
   const [showConfirmClear, setShowConfirmClear] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(48);
+
+  // Reset pagination when category or search query changes
+  React.useEffect(() => {
+    setVisibleCount(48);
+  }, [selectedCategory, searchQuery]);
 
   // Batch progress state
   const [isProcessing, setIsProcessing] = useState(false);
@@ -121,7 +127,30 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
     return list;
   }, [allAssets]);
 
-  if (!isOpen) return null;
+  const filteredAssets = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return allAssets.filter((asset) => {
+      const matchesCategory =
+        selectedCategory === 'all'
+          ? true
+          : selectedCategory === 'custom'
+          ? asset.isCustom
+          : asset.category === selectedCategory;
+
+      if (!matchesCategory) return false;
+      if (!q) return true;
+
+      return (
+        asset.name.toLowerCase().includes(q) ||
+        (asset.tags && asset.tags.some((t) => t.toLowerCase().includes(q)))
+      );
+    });
+  }, [allAssets, selectedCategory, searchQuery]);
+
+  const displayedAssets = useMemo(
+    () => filteredAssets.slice(0, visibleCount),
+    [filteredAssets, visibleCount]
+  );
 
   // Turn uploaded custom vault assets into permanent files in src/assets/stamps/<category>/
   const handlePermanentizeAssets = async () => {
@@ -202,22 +231,6 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
     reader.readAsText(file);
     e.target.value = '';
   };
-
-  const filteredAssets = allAssets.filter((asset) => {
-    const matchesCategory =
-      selectedCategory === 'all'
-        ? true
-        : selectedCategory === 'custom'
-        ? asset.isCustom
-        : asset.category === selectedCategory;
-
-    const matchesSearch =
-      searchQuery === '' ||
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (asset.tags && asset.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase())));
-
-    return matchesCategory && matchesSearch;
-  });
 
   // Safe Batch Adder
   const commitNewAssets = (newAssets: StampAsset[]) => {
@@ -323,6 +336,8 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
   const handleCancelBatch = () => {
     cancelBatchRef.current = true;
   };
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -1063,69 +1078,94 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                     )}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {filteredAssets.map((asset) => {
-                      const isSelected = selectedAssetId === asset.id;
+                  <div className="flex flex-col gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                      {displayedAssets.map((asset) => {
+                        const isSelected = selectedAssetId === asset.id;
 
-                      return (
-                        <div
-                          key={asset.id}
-                          onClick={() => {
-                            onSelectAsset(asset);
-                            onClose();
-                          }}
-                          className={`group relative flex flex-col items-center justify-between p-3 rounded-xl border transition-all cursor-pointer bg-white hover:bg-slate-50 shadow-xs hover:shadow-md ${
-                            isSelected
-                              ? 'border-[#00BBF9] ring-2 ring-[#00BBF9]/40 bg-[#00BBF9]/10'
-                              : 'border-[#E2D6B5] hover:border-[#00BBF9]/60'
-                          }`}
+                        return (
+                          <div
+                            key={asset.id}
+                            onClick={() => {
+                              onSelectAsset(asset);
+                              onClose();
+                            }}
+                            className={`group relative flex flex-col items-center justify-between p-3 rounded-xl border transition-all cursor-pointer bg-white hover:bg-slate-50 shadow-xs hover:shadow-md ${
+                              isSelected
+                                ? 'border-[#00BBF9] ring-2 ring-[#00BBF9]/40 bg-[#00BBF9]/10'
+                                : 'border-[#E2D6B5] hover:border-[#00BBF9]/60'
+                            }`}
+                          >
+                            {/* Preview Icon */}
+                            <div className="w-20 h-20 flex items-center justify-center my-1 group-hover:scale-105 transition-transform">
+                              {asset.imageUrl ? (
+                                <img
+                                  src={asset.imageUrl}
+                                  alt={asset.name}
+                                  loading="lazy"
+                                  decoding="async"
+                                  className="max-w-full max-h-full object-contain filter drop-shadow-md"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : asset.svgData ? (
+                                <div
+                                  className="w-full h-full flex items-center justify-center filter drop-shadow-md"
+                                  dangerouslySetInnerHTML={{ __html: asset.svgData }}
+                                />
+                              ) : null}
+                            </div>
+
+                            {/* Name & Badge */}
+                            <div className="w-full text-center mt-2">
+                              <div className="text-xs font-bold text-slate-800 truncate" title={asset.name}>
+                                {asset.name}
+                              </div>
+                              <div className="text-[10px] text-slate-500 capitalize truncate flex items-center justify-center gap-1">
+                                {asset.isCustom && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#00BBF9]" />
+                                )}
+                                <span>{asset.category.replace('_', ' ')}</span>
+                              </div>
+                            </div>
+
+                            {/* Custom asset delete button */}
+                            {asset.isCustom && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDeleteCustomAsset(asset.id);
+                                }}
+                                className="absolute top-2 right-2 p-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-700 border border-rose-300 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                title="Delete custom stamp"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Progressive Chunk Loader */}
+                    {visibleCount < filteredAssets.length && (
+                      <div className="flex items-center justify-center gap-3 py-4 border-t border-[#E2D6B5]/60">
+                        <button
+                          onClick={() => setVisibleCount((prev) => Math.min(filteredAssets.length, prev + 48))}
+                          className="px-5 py-2 bg-white hover:bg-amber-50 text-amber-900 border border-[#E2D6B5] hover:border-amber-400 font-bold rounded-xl text-xs shadow-xs cursor-pointer transition-all active:scale-95 flex items-center gap-2"
                         >
-                          {/* Preview Icon */}
-                          <div className="w-20 h-20 flex items-center justify-center my-1 group-hover:scale-105 transition-transform">
-                            {asset.imageUrl ? (
-                              <img
-                                src={asset.imageUrl}
-                                alt={asset.name}
-                                className="max-w-full max-h-full object-contain filter drop-shadow-md"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : asset.svgData ? (
-                              <div
-                                className="w-full h-full flex items-center justify-center filter drop-shadow-md"
-                                dangerouslySetInnerHTML={{ __html: asset.svgData }}
-                              />
-                            ) : null}
-                          </div>
-
-                          {/* Name & Badge */}
-                          <div className="w-full text-center mt-2">
-                            <div className="text-xs font-bold text-slate-800 truncate" title={asset.name}>
-                              {asset.name}
-                            </div>
-                            <div className="text-[10px] text-slate-500 capitalize truncate flex items-center justify-center gap-1">
-                              {asset.isCustom && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#00BBF9]" />
-                              )}
-                              <span>{asset.category.replace('_', ' ')}</span>
-                            </div>
-                          </div>
-
-                          {/* Custom asset delete button */}
-                          {asset.isCustom && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteCustomAsset(asset.id);
-                              }}
-                              className="absolute top-2 right-2 p-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-700 border border-rose-300 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                              title="Delete custom stamp"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
+                          <span>Load Next 48 Stamps</span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            ({filteredAssets.length - visibleCount} remaining)
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => setVisibleCount(filteredAssets.length)}
+                          className="px-4 py-2 bg-[#F4EBD0] hover:bg-[#EFE5C9] text-slate-700 font-medium rounded-xl text-xs border border-[#E2D6B5] cursor-pointer transition-all"
+                        >
+                          Load All ({filteredAssets.length})
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1137,7 +1177,7 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
         <div className="px-6 py-3 bg-[#F4EBD0] border-t border-[#E2D6B5] flex items-center justify-between text-xs text-slate-600 font-medium">
           <div className="flex items-center gap-3">
             <span>
-              Showing <span className="font-bold text-[#D9480F]">{filteredAssets.length}</span> stamps in vault
+              Showing <span className="font-bold text-[#D9480F]">{displayedAssets.length}</span> of <span className="font-bold text-slate-800">{filteredAssets.length}</span> stamps in vault
             </span>
             {customAssets.length > 0 && (
               <span className="text-slate-500">
