@@ -99,8 +99,8 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
         });
         return;
       }
-      const padX = 40;
-      const padY = 40;
+      const padX = 20;
+      const padY = 20;
       const scaleX = (w - padX * 2) / dimensions.width;
       const scaleY = (h - padY * 2) / dimensions.height;
       const bestScale = Math.min(scaleX, scaleY, 1.25);
@@ -147,9 +147,11 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
         const viewW = viewportEl ? viewportEl.clientWidth : 1400;
         const viewH = viewportEl ? viewportEl.clientHeight : 900;
 
-        // Minimum zoom is clamped so the map never shrinks to a tiny stamp
-        const fitScale = Math.min((viewW - 60) / dimensions.width, (viewH - 60) / dimensions.height);
-        const minAllowedZoom = Math.max(0.35, Math.min(0.6, +(fitScale * 0.65).toFixed(2)));
+        // Keep the map useful while zooming out: the minimum is the scale
+        // that fits the full map with roughly 20px of breathing room.
+        // Going smaller only turns the editable map into a tiny thumbnail.
+        const fitScale = Math.min((viewW - 40) / dimensions.width, (viewH - 40) / dimensions.height);
+        const minAllowedZoom = Math.max(0.1, +fitScale.toFixed(2));
         const maxAllowedZoom = 4.0;
 
         const rawTarget =

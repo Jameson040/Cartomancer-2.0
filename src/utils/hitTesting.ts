@@ -4,11 +4,36 @@
 
 import { PlacedStamp, PlacedText, PlacedPath } from '../types';
 import { imageManager } from './imageManager';
+import { getStampGeometry, worldToStampLocal } from './stampGeometry';
 
 export interface HitTestResult {
   type: 'stamp' | 'label' | 'path';
   id: string;
   handle?: 'move' | 'scale' | 'rotate';
+}
+
+type AlphaMask = { width: number; height: number; data: Uint8ClampedArray };
+const alphaMasks = new Map<string, AlphaMask>();
+
+function getStampAlphaMask(assetId: string, img: HTMLImageElement): AlphaMask | null {
+  const cached = alphaMasks.get(assetId);
+  if (cached && cached.width === img.width && cached.height === img.height) return cached;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, img.width, img.height).data;
+    const mask = { width: img.width, height: img.height, data };
+    alphaMasks.set(assetId, mask);
+    return mask;
+  } catch {
+    // A cross-origin/custom image may not allow pixel reads. Bounding-box
+    // selection remains a safe fallback for that asset.
+    return null;
+  }
 }
 
 /**
@@ -24,22 +49,34 @@ export function isPointInStamp(
   const img = imageManager.getImage(stamp.assetId);
   const rawW = img ? img.width : 90;
   const rawH = img ? img.height : 90;
-  const drawW = rawW * stamp.scale * 0.7;
-  const drawH = rawH * stamp.scale * 0.7;
+  const baseGeometry = getStampGeometry(rawW, rawH, stamp.scale);
+  const geometry = getStampGeometry(rawW, rawH, stamp.scale, tolerance);
+  const drawW = baseGeometry.width;
+  const drawH = baseGeometry.height;
+  const local = worldToStampLocal(x, y, stamp.x, stamp.y, stamp.rotation);
+  const localX = local.x;
+  const localY = local.y;
 
-  // Transform world (x, y) into stamp local space
-  const dx = x - stamp.x;
-  const dy = y - stamp.y;
-  const rad = (-stamp.rotation * Math.PI) / 180;
-  const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
-  const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+  const minX = geometry.left;
+  const maxX = geometry.right;
+  const minY = geometry.top;
+  const maxY = geometry.bottom;
+  if (localX < minX || localX > maxX || localY < minY || localY > maxY) return false;
 
-  const minX = -drawW / 2 - tolerance;
-  const maxX = drawW / 2 + tolerance;
-  const minY = -drawH * 0.75 - tolerance;
-  const maxY = drawH * 0.25 + tolerance;
+  // Keep the forgiving tolerance for unloaded/cross-origin images. For the
+  // repository's local stamps, use actual alpha so transparent padding cannot
+  // steal clicks from another visible object underneath.
+  if (!img || !img.complete || img.naturalWidth === 0) return true;
+  const alphaMask = getStampAlphaMask(stamp.assetId, img);
+  if (!alphaMask) return true;
 
-  return localX >= minX && localX <= maxX && localY >= minY && localY <= maxY;
+  const sourceX = Math.round(((localX + drawW / 2) / drawW) * (alphaMask.width - 1));
+  const sourceY = stamp.flipY
+    ? Math.round(((drawH * 0.25 - localY) / drawH) * (alphaMask.height - 1))
+    : Math.round(((localY + drawH * 0.75) / drawH) * (alphaMask.height - 1));
+  const mappedX = stamp.flipX ? alphaMask.width - 1 - sourceX : sourceX;
+  if (mappedX < 0 || mappedX >= alphaMask.width || sourceY < 0 || sourceY >= alphaMask.height) return false;
+  return alphaMask.data[(sourceY * alphaMask.width + mappedX) * 4 + 3] > 18;
 }
 
 /**
@@ -53,18 +90,16 @@ export function getStampHitHandle(
   const img = imageManager.getImage(stamp.assetId);
   const rawW = img ? img.width : 90;
   const rawH = img ? img.height : 90;
-  const drawW = rawW * stamp.scale * 0.7;
-  const drawH = rawH * stamp.scale * 0.7;
-
-  const dx = x - stamp.x;
-  const dy = y - stamp.y;
-  const rad = (-stamp.rotation * Math.PI) / 180;
-  const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
-  const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+  const geometry = getStampGeometry(rawW, rawH, stamp.scale);
+  const drawW = geometry.width;
+  const drawH = geometry.height;
+  const local = worldToStampLocal(x, y, stamp.x, stamp.y, stamp.rotation);
+  const localX = local.x;
+  const localY = local.y;
 
   // 1. Rotation handle (at top center)
   const rotHandleX = 0;
-  const rotHandleY = -drawH * 0.75 - 18;
+  const rotHandleY = geometry.top - 18;
   if (Math.hypot(localX - rotHandleX, localY - rotHandleY) <= 12) {
     return 'rotate';
   }

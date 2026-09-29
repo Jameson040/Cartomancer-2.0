@@ -4,6 +4,8 @@ Professional-grade fantasy map creator with progressive generation, Azgaar-inspi
 
 ## Architecture & Codebase Overview
 
+> For the current feature audit, implementation priorities, and custom asset intake requirements, see [`docs/PRODUCT_UPGRADE_PLAN.md`](docs/PRODUCT_UPGRADE_PLAN.md) and [`docs/ASSET_SPECIFICATION.md`](docs/ASSET_SPECIFICATION.md).
+
 The entire application runs as a modern, modular React 19 + TypeScript + Vite + Tailwind CSS application located in `src/`:
 
 - **`src/App.tsx`**: Main orchestration component managing canvas viewports, multi-layer rendering stacks, brush engine, undo/redo history, and modal interactions.

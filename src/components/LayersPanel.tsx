@@ -45,10 +45,13 @@ interface LayersPanelProps {
   labelCount: number;
   atmosphere?: AtmosphereFilter;
   onAtmosphereChange?: (updates: Partial<AtmosphereFilter>) => void;
+  stampCategoryVisibility?: Record<string, boolean>;
+  onToggleStampCategory?: (category: string) => void;
 }
 
 interface LayerMeta {
   key: string;
+  keys: string[];
   name: string;
   icon: React.ElementType;
   description: string;
@@ -65,67 +68,18 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
   labelCount,
   atmosphere,
   onAtmosphereChange,
+  stampCategoryVisibility = {},
+  onToggleStampCategory,
 }) => {
   if (!isOpen) return null;
 
+  // Keep the panel focused on map-making concepts rather than internal canvases.
   const layerItems: LayerMeta[] = [
-    {
-      key: 'atmosphere',
-      name: 'Atmosphere & Filter',
-      icon: Sparkles,
-      description: 'Vintage parchment tint, sunlight, and edge vignette',
-    },
-    {
-      key: 'grid',
-      name: 'Tactical Grid',
-      icon: Grid,
-      description: 'Square, Hex, or Isometric battle overlay',
-    },
-    {
-      key: 'labels',
-      name: 'Map Labels',
-      icon: Type,
-      description: 'Kingdom titles, region names, and typography',
-      countBadge: labelCount,
-    },
-    {
-      key: 'stamps',
-      name: 'Stamps & Objects',
-      icon: TreePine,
-      description: 'Placed mountains, forests, castles, and assets',
-      countBadge: stampCount,
-    },
-    {
-      key: 'paths',
-      name: 'Paths & Rivers',
-      icon: Spline,
-      description: 'Waterways, roads, and territorial borders',
-      countBadge: pathCount,
-    },
-    {
-      key: 'elevation',
-      name: 'Elevation Relief',
-      icon: TrendingUp,
-      description: 'Hillshading relief and contour elevation',
-    },
-    {
-      key: 'textures',
-      name: 'Biome Textures',
-      icon: Paintbrush,
-      description: 'Painted grasses, deserts, snow, rocks, and badlands',
-    },
-    {
-      key: 'landmass',
-      name: 'Landmass & Coastlines',
-      icon: MountainSnow,
-      description: 'Continental land mask and foam ripples',
-    },
-    {
-      key: 'water',
-      name: 'Ocean Base',
-      icon: Waves,
-      description: 'Deep abyss ocean and shallow lagoons',
-    },
+    { key: 'terrain', keys: ['landmass', 'water'], name: 'Terrain', icon: MountainSnow, description: 'Land, sea, and coastline boundary' },
+    { key: 'biomes', keys: ['textures'], name: 'Biomes', icon: Paintbrush, description: 'Land and water textures' },
+    { key: 'elevation', keys: ['elevation'], name: 'Elevation', icon: TrendingUp, description: 'Relief, height, and contours' },
+    { key: 'paths', keys: ['paths'], name: 'Paths & Rivers', icon: Spline, description: 'Waterways, roads, and borders', countBadge: pathCount },
+    { key: 'labels-objects', keys: ['labels', 'stamps'], name: 'Labels & Objects', icon: TreePine, description: 'Names, markers, and map objects', countBadge: labelCount + stampCount },
   ];
 
   return (
@@ -149,12 +103,36 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
         </button>
       </div>
 
+      {onToggleStampCategory && (
+        <div className="mx-3 mt-3 rounded-lg border border-[#E2D6B5] bg-white p-2.5">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Stamp Sets</div>
+          <div className="grid grid-cols-2 gap-1">
+            {[
+              ['trees', 'Trees'], ['mountains', 'Mountains'], ['lakes', 'Lakes'], ['swamps', 'Swamps'],
+              ['forts', 'Forts'], ['castles', 'Castles'], ['settlements', 'Settlements'], ['piers', 'Piers'],
+              ['water_maritime', 'Maritime'], ['decorations', 'Decorations'], ['custom', 'Custom'],
+            ].map(([category, label]) => {
+              const visible = stampCategoryVisibility[category] !== false;
+              return <button key={category} onClick={() => onToggleStampCategory(category)} className={`flex items-center gap-1 rounded border px-1.5 py-1 text-[10px] font-medium ${visible ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-slate-200 bg-slate-100 text-slate-400 line-through'}`}><span className={`h-1.5 w-1.5 rounded-full ${visible ? 'bg-emerald-500' : 'bg-slate-400'}`} />{label}</button>;
+            })}
+          </div>
+          <p className="mt-2 text-[10px] text-slate-500">Hide a stamp family without changing the map or deleting assets.</p>
+        </div>
+      )}
+
       {/* Layers List */}
       <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
         {layerItems.map((item) => {
-          const state = (layers as any)[item.key] as LayerState;
-          if (!state) return null;
-
+          const states = item.keys.map((key) => (layers as any)[key] as LayerState).filter(Boolean);
+          if (states.length === 0) return null;
+          const state: LayerState = {
+            id: item.key,
+            name: item.name,
+            visible: states.every((layer) => layer.visible),
+            locked: states.every((layer) => layer.locked),
+            opacity: Math.min(...states.map((layer) => layer.opacity ?? 1)),
+          };
+          const updateGroup = (updates: Partial<LayerState>) => item.keys.forEach((key) => onUpdateLayer(key, updates));
           const Icon = item.icon;
 
           return (
@@ -185,7 +163,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
                   {/* Visibility toggle */}
                   <button
                     id={`btn-layer-visibility-${item.key}`}
-                    onClick={() => onUpdateLayer(item.key, { visible: !state.visible })}
+                    onClick={() => updateGroup({ visible: !state.visible })}
                     className={`p-1 rounded transition-colors ${
                       state.visible
                         ? 'text-slate-700 hover:text-[#00BBF9] hover:bg-slate-100'
@@ -199,7 +177,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
                   {/* Lock toggle */}
                   <button
                     id={`btn-layer-lock-${item.key}`}
-                    onClick={() => onUpdateLayer(item.key, { locked: !state.locked })}
+                    onClick={() => updateGroup({ locked: !state.locked })}
                     className={`p-1 rounded transition-colors ${
                       state.locked
                         ? 'text-[#D9480F] bg-[#FF7E5F]/15'
@@ -222,7 +200,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
                   max="1"
                   step="0.05"
                   value={state.opacity ?? 1}
-                  onChange={(e) => onUpdateLayer(item.key, { opacity: Number(e.target.value) })}
+                  onChange={(e) => updateGroup({ opacity: Number(e.target.value) })}
                   disabled={!state.visible || state.locked}
                   className="w-full accent-[#00BBF9] cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
                 />

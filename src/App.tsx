@@ -19,6 +19,7 @@ import {
   PlacedStamp,
   PlacedText,
   ReferenceMapConfig,
+  ImportedMapLayer,
   StampAsset,
   TextBannerStyle,
   TextPresetStyle,
@@ -30,6 +31,7 @@ import { TEMPLATES } from './data/templates';
 import { imageManager } from './utils/imageManager';
 import { assetStorage } from './utils/assetStorage';
 import { AutosavePayload, AutosaveRecord } from './utils/projectAutosave';
+import { createProjectFile, CURRENT_PROJECT_VERSION, normalizeProjectFile } from './utils/projectFormat';
 import { ParchmentFilterOptions } from './utils/cannyEdgeFilter';
 import { CanvasRenderer } from './utils/canvasRenderer';
 import {
@@ -40,7 +42,11 @@ import {
   carveRiverGorge,
 } from './utils/elevationModel';
 import { simulateHydraulicErosion } from './utils/proceduralNoise';
+
+import { createHeightField, NumericHeightField, serializeHeightField, deserializeHeightField, sampleHeight, encodeHeight } from './utils/heightField';
+
 import { paintBrushDab, paintStroke } from './utils/painting/strokePainter';
+import { fillContiguousRegion } from './utils/painting/regionFill';
 import { isPointInStamp, getStampHitHandle, isPointInLabel, isPointNearPath, getStampsFrontToBack } from './utils/hitTesting';
 
 // Custom Domain Hooks
@@ -69,6 +75,9 @@ import { MapImportModal } from './components/MapImportModal';
 import { AssetOutlinerModal } from './components/AssetOutlinerModal';
 
 const DEFAULT_DIMENSIONS: CanvasDimensions = { width: 1400, height: 900 };
+
+const safeProjectFilename = (name: string): string =>
+  name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'cartomancer_map';
 
 export default function App() {
   // --- Project Configuration ---
@@ -105,6 +114,9 @@ export default function App() {
   // --- Tool & Brush Settings ---
   const [activeTool, setActiveTool] = useState<ToolType>('brush');
   const [isToolSettingsOpen, setIsToolSettingsOpen] = useState(true);
+  const [numericHeightfieldEnabled, setNumericHeightfieldEnabled] = useState(false);
+  const [showHeightfieldOverlay, setShowHeightfieldOverlay] = useState(false);
+  const heightFieldRef = useRef<NumericHeightField | null>(null);
   const [brushSettings, setBrushSettings] = useState<BrushSettings>({
     size: 60,
     density: 0.6,
@@ -158,6 +170,8 @@ export default function App() {
   // Custom Assets, Biomes, and Reference Maps
   const [customAssets, setCustomAssets] = useState<StampAsset[]>([]);
   const [referenceMap, setReferenceMap] = useState<ReferenceMapConfig | null>(null);
+  const [importedMapLayer, setImportedMapLayer] = useState<ImportedMapLayer | null>(null);
+  const [stampCategoryVisibility, setStampCategoryVisibility] = useState<Record<string, boolean>>({});
   const [customBiomes, setCustomBiomes] = useState<BiomeTexture[]>(() => {
     try {
       const saved = localStorage.getItem('cartomancer_custom_biomes');
@@ -192,6 +206,7 @@ export default function App() {
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const textureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const waterTextureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const elevationCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Active stroke painting ref
@@ -227,7 +242,12 @@ export default function App() {
   const selectedStampIdRef = useRef<string | null>(null);
   const selectedPathIdRef = useRef<string | null>(null);
   const selectedLabelIdRef = useRef<string | null>(null);
+  const [selectedStampIds, setSelectedStampIds] = useState<string[]>([]);
+  const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+  const [polygonSelection, setPolygonSelection] = useState<{ x: number; y: number }[]>([]);
+  const marqueeRef = useRef<typeof marquee>(null);
   const activePathDraftRef = useRef<any | null>(null);
+  const pathNodeDragRef = useRef<{ pathId: string; pointIndex: number; moved: boolean } | null>(null);
 
   // --- Redraw Coordinator ---
   const requestRedraw = useCallback(
@@ -253,14 +273,23 @@ export default function App() {
       const activeAtmosphere = explicitOverrides?.atmosphere ?? atmosphere;
       const activeTopographical = explicitOverrides?.topographicalView ?? topographicalView;
 
+      const allStampAssets = [...DEFAULT_STAMP_ASSETS, ...customAssets];
+      const stampsToRender = (explicitOverrides?.stamps ?? stampsRef.current).filter((stamp) => {
+        const asset = allStampAssets.find((candidate) => candidate.id === stamp.assetId);
+        return !asset?.category || stampCategoryVisibility[asset.category] !== false;
+      });
+
       CanvasRenderer.render({
         ctx,
         width: dimensions.width,
         height: dimensions.height,
         maskCanvas: mask,
         textureCanvas: texture,
+        waterTextureCanvas: waterTextureCanvasRef.current!,
         elevationCanvas: elevation,
-        stamps: explicitOverrides?.stamps ?? stampsRef.current,
+        heightField: numericHeightfieldEnabled ? heightFieldRef.current : null,
+        showHeightfieldOverlay,
+        stamps: stampsToRender,
         paths: explicitOverrides?.paths ?? pathsRef.current,
         labels: explicitOverrides?.labels ?? labelsRef.current,
         customAssets,
@@ -271,12 +300,19 @@ export default function App() {
         waterShallowColor,
         coastlineRipples: brushSettings.coastlineRipples,
         coastlineColor: brushSettings.coastlineColor,
+        coastlineHatching: brushSettings.coastlineHatching,
+        autoBeaching: brushSettings.autoBeaching,
+        showContourLines: brushSettings.showContourLines,
+        contourInterval: brushSettings.contourInterval,
+        elevationConfig,
         topographicalView: activeTopographical,
         selectedStampId: isStampsActive() ? selectedStampIdRef.current : null,
+        selectedStampIds: isStampsActive() ? selectedStampIds : [],
         selectedLabelId: isLabelsActive() ? selectedLabelIdRef.current : null,
         selectedPathId: isPathsActive() ? selectedPathIdRef.current : null,
         activePathDraft: activePathDraftRef.current,
         referenceMap,
+        importedMapLayer,
       });
     },
     [
@@ -290,11 +326,21 @@ export default function App() {
       waterShallowColor,
       brushSettings.coastlineRipples,
       brushSettings.coastlineColor,
+      brushSettings.coastlineHatching,
+      brushSettings.autoBeaching,
+      brushSettings.showContourLines,
+      brushSettings.contourInterval,
+      elevationConfig,
       topographicalView,
+      numericHeightfieldEnabled,
+      showHeightfieldOverlay,
       isStampsActive,
+      selectedStampIds,
       isLabelsActive,
       isPathsActive,
       referenceMap,
+      importedMapLayer,
+      stampCategoryVisibility,
     ]
   );
 
@@ -331,6 +377,7 @@ export default function App() {
   } = useMapHistory({
     maskCanvasRef,
     textureCanvasRef,
+    waterTextureCanvasRef,
     elevationCanvasRef,
     stampsRef,
     pathsRef,
@@ -413,6 +460,7 @@ export default function App() {
     finishTransform,
   } = useTransformManager({
     selectedStampId,
+    selectedStampIds,
     selectedLabelId,
     stampsRef,
     labelsRef,
@@ -461,7 +509,18 @@ export default function App() {
   // Synchronize canvas whenever layers, atmosphere, topography, or global appearance changes
   useEffect(() => {
     requestRedraw();
-  }, [layers, atmosphere, topographicalView, gridConfig, waterDeepColor, waterShallowColor, requestRedraw]);
+  }, [
+    layers,
+    atmosphere,
+    topographicalView,
+    gridConfig,
+    waterDeepColor,
+    waterShallowColor,
+    selectedStampId,
+    selectedPathId,
+    selectedLabelId,
+    requestRedraw,
+  ]);
 
   // --- Initialize Offscreen Canvases & Custom Assets ---
   useEffect(() => {
@@ -475,12 +534,15 @@ export default function App() {
             ...prev,
             selectedStampId: prev.selectedStampId || loaded[0].id,
           }));
+          requestRedraw();
         } else {
           imageManager.preloadDefaultAssets();
+          requestRedraw();
         }
       })
       .catch(() => {
         imageManager.preloadDefaultAssets();
+        requestRedraw();
       });
 
     const mask = document.createElement('canvas');
@@ -492,6 +554,11 @@ export default function App() {
     texture.width = dimensions.width;
     texture.height = dimensions.height;
     textureCanvasRef.current = texture;
+
+    const waterTexture = document.createElement('canvas');
+    waterTexture.width = dimensions.width;
+    waterTexture.height = dimensions.height;
+    waterTextureCanvasRef.current = waterTexture;
 
     const elevation = document.createElement('canvas');
     elevation.width = dimensions.width;
@@ -590,7 +657,14 @@ export default function App() {
       return;
     }
 
-    let finalPoints = activePathDraft.points;
+    // Remove high-frequency pointer jitter before committing. The renderer
+    // performs the visual curve interpolation; this keeps the editable path
+    // itself clean and lightweight.
+    let finalPoints = activePathDraft.points.filter((point, index, points) => {
+      if (index === 0 || index === points.length - 1) return true;
+      const previous = points[index - 1];
+      return Math.hypot(point.x - previous.x, point.y - previous.y) >= 2.5;
+    });
     if (finalPoints.length === 1) {
       finalPoints = [
         finalPoints[0],
@@ -649,9 +723,66 @@ export default function App() {
     if (tmpl.project.waterDeepColor) setWaterDeepColor(tmpl.project.waterDeepColor);
     if (tmpl.project.waterShallowColor) setWaterShallowColor(tmpl.project.waterShallowColor);
 
-    const newStamps = tmpl.project.stamps ? tmpl.project.stamps.map((s) => ({ ...s })) : [];
-    const newPaths = tmpl.project.paths ? tmpl.project.paths.map((p) => ({ ...p, points: [...p.points] })) : [];
-    const newLabels = tmpl.project.labels ? tmpl.project.labels.map((l) => ({ ...l })) : [];
+    let newStamps = tmpl.project.stamps ? tmpl.project.stamps.map((s) => ({ ...s })) : [];
+    let newPaths = tmpl.project.paths ? tmpl.project.paths.map((p) => ({ ...p, points: [...p.points] })) : [];
+    let newLabels = tmpl.project.labels ? tmpl.project.labels.map((l) => ({ ...l })) : [];
+
+    // The default realm is an interactive fixture, not an empty canvas. It
+    // deliberately uses the repository's discovered PNG packs so every reload
+    // exercises selection, depth sorting, paths, masking, and export.
+    if (templateKey === 'mythic_realm') {
+      const assetsByCategory = (category: string) =>
+        DEFAULT_STAMP_ASSETS.filter((asset) => asset.category === category);
+      const demoStamp = (category: string, index: number, x: number, y: number, scale: number, layer: number): PlacedStamp | null => {
+        const asset = assetsByCategory(category)[index % Math.max(1, assetsByCategory(category).length)];
+        if (!asset) return null;
+        return {
+          id: `demo_${category}_${index}`,
+          assetId: asset.id,
+          x,
+          y,
+          scale,
+          rotation: ((index * 17) % 24) - 12,
+          flipX: index % 3 === 0,
+          flipY: false,
+          opacity: 0.94,
+          layer,
+          createdAt: 1000 + index,
+        };
+      };
+
+      const demoStamps = [
+        ...Array.from({ length: 9 }, (_, i) => demoStamp('trees', i, 300 + (i % 3) * 90, 340 + Math.floor(i / 3) * 72, 0.30 + (i % 3) * 0.04, 1)),
+        ...Array.from({ length: 3 }, (_, i) => demoStamp('swamps', i, 720 + (i % 3) * 55, 585, 0.36, 0)),
+        ...Array.from({ length: 2 }, (_, i) => demoStamp('forts', i, 390 + i * 360, 270 + (i % 2) * 40, 0.42, 3)),
+        ...Array.from({ length: 2 }, (_, i) => demoStamp('lakes', i, 300 + i * 360, 650, 0.42, 0)),
+        ...Array.from({ length: 2 }, (_, i) => demoStamp('piers', i, 830 + i * 55, 470 + (i % 2) * 24, 0.38, 2)),
+      ].filter((stamp): stamp is PlacedStamp => Boolean(stamp));
+      newStamps = demoStamps;
+
+      newPaths = [
+        {
+          id: 'demo_river_main', style: 'river', points: [{ x: 360, y: 170 }, { x: 420, y: 265 }, { x: 470, y: 370 }, { x: 550, y: 465 }, { x: 690, y: 540 }, { x: 850, y: 610 }], width: 10, color: '#38bdf8', textureId: 'river_water', opacity: 0.95, smoothed: true, taper: true, restrictToLand: true,
+        },
+        {
+          id: 'demo_river_branch', style: 'river', points: [{ x: 690, y: 540 }, { x: 650, y: 475 }, { x: 620, y: 390 }, { x: 590, y: 315 }], width: 6, color: '#60a5fa', textureId: 'river_water', opacity: 0.9, smoothed: true, taper: true, restrictToLand: true,
+        },
+        {
+          id: 'demo_road_north', style: 'road', points: [{ x: 315, y: 210 }, { x: 420, y: 265 }, { x: 550, y: 300 }, { x: 680, y: 300 }, { x: 850, y: 390 }], width: 7, color: '#a16207', textureId: 'dirt_road', opacity: 0.9, smoothed: true, taper: false, restrictToLand: true,
+        },
+        {
+          id: 'demo_border', style: 'border', points: [{ x: 220, y: 300 }, { x: 430, y: 240 }, { x: 700, y: 270 }, { x: 930, y: 430 }, { x: 820, y: 680 }], width: 3, color: '#b45309', opacity: 0.7, smoothed: true, taper: false, restrictToLand: true, dashPattern: [8, 6],
+        },
+      ];
+
+      const demoLabels: PlacedText[] = [
+        { id: 'demo_label_realm', text: 'The Sundered Realm', x: 560, y: 115, fontSize: 34, scale: 1, fontFamily: "'Cinzel', serif", color: '#fef3c7', strokeColor: '#1e293b', strokeWidth: 4, rotation: 0, bannerStyle: 'royal_banner', boxColor: '#78350f', boxBorderColor: '#f59e0b', boxOpacity: 0.9, letterSpacing: 4, curvature: 0, stylePreset: 'regal_serif' },
+        { id: 'demo_label_northwatch', text: 'Northwatch', x: 315, y: 175, fontSize: 18, scale: 1, fontFamily: "'Cinzel', serif", color: '#fef3c7', strokeColor: '#1e293b', strokeWidth: 3, rotation: -8, bannerStyle: 'stone_plaque', boxColor: '#334155', boxBorderColor: '#cbd5e1', boxOpacity: 0.88, letterSpacing: 2, curvature: 0, stylePreset: 'standard' },
+        { id: 'demo_label_fen', text: 'The Low Fen', x: 760, y: 665, fontSize: 20, scale: 1, fontFamily: "'Cinzel', serif", color: '#ecfccb', strokeColor: '#1e293b', strokeWidth: 3, rotation: -5, bannerStyle: 'parchment_ribbon', boxColor: '#365314', boxBorderColor: '#bef264', boxOpacity: 0.82, letterSpacing: 3, curvature: 12, stylePreset: 'imperial_spaced' },
+        { id: 'demo_label_river', text: 'Aurelian River', x: 565, y: 455, fontSize: 17, scale: 1, fontFamily: "'Cinzel', serif", color: '#e0f2fe', strokeColor: '#0c4a6e', strokeWidth: 3, rotation: 18, bannerStyle: 'none', letterSpacing: 2, curvature: 28, stylePreset: 'standard' },
+      ];
+      newLabels = demoLabels;
+    }
 
     stampsRef.current = newStamps;
     pathsRef.current = newPaths;
@@ -663,15 +794,18 @@ export default function App() {
 
     const mask = maskCanvasRef.current;
     const texture = textureCanvasRef.current;
+    const waterTexture = waterTextureCanvasRef.current;
     const elevation = elevationCanvasRef.current;
-    if (!mask || !texture || !elevation) return;
+    if (!mask || !texture || !waterTexture || !elevation) return;
 
     const mCtx = mask.getContext('2d')!;
     const tCtx = texture.getContext('2d')!;
+    const wtCtx = waterTexture.getContext('2d')!;
     const eCtx = elevation.getContext('2d')!;
 
     mCtx.clearRect(0, 0, mask.width, mask.height);
     tCtx.clearRect(0, 0, texture.width, texture.height);
+    wtCtx.clearRect(0, 0, waterTexture.width, waterTexture.height);
     eCtx.clearRect(0, 0, elevation.width, elevation.height);
 
     if (templateKey === 'mythic_realm') {
@@ -751,9 +885,71 @@ export default function App() {
       config: elevationConfig,
     });
     bakeTopographyToCanvas(derived, elev, elevationConfig);
-    pushHistorySnapshot('Derive Topography from Drawn Map');
-    requestRedraw();
-  }, [elevationConfig, pushHistorySnapshot, requestRedraw]);
+
+    // Turn the derived suggestions into editable map objects. Existing generated
+    // objects are preserved so running the tool is safe to repeat only once per
+    // accepted operation and every river/route can still be edited afterward.
+    const generatedPaths = [...derived.suggestedRivers, ...derived.suggestedRoutes].map((path, index) => ({
+      ...path,
+      id: `${path.id}_${index}`,
+      restrictToLand: path.style === 'river' ? true : false,
+    }));
+    const settlementAssets = DEFAULT_STAMP_ASSETS.filter((asset) => asset.category === 'forts');
+    const generatedSettlementStamps: PlacedStamp[] = derived.suggestedSettlements
+      .map((settlement, index) => {
+        const asset = settlementAssets[index % Math.max(1, settlementAssets.length)];
+        if (!asset) return null;
+        return {
+          id: `suggested_settlement_stamp_${Date.now()}_${index}`,
+          assetId: asset.id,
+          x: settlement.x,
+          y: settlement.y,
+          scale: settlement.type === 'fortress' ? 0.62 : 0.48,
+          rotation: (index * 11) % 18 - 9,
+          flipX: index % 2 === 0,
+          flipY: false,
+          opacity: 0.95,
+          layer: 3,
+          createdAt: Date.now() + index,
+        } as PlacedStamp;
+      })
+      .filter((stamp): stamp is PlacedStamp => Boolean(stamp));
+    const generatedLabels: PlacedText[] = derived.suggestedSettlements.map((settlement, index) => ({
+      id: `suggested_settlement_${Date.now()}_${index}`,
+      text: settlement.name,
+      x: settlement.x,
+      y: settlement.y,
+      fontSize: settlement.type === 'fortress' ? 16 : 13,
+      scale: 1,
+      fontFamily: "'Cinzel', serif",
+      color: settlement.type === 'fortress' ? '#fef3c7' : '#422006',
+      strokeColor: settlement.type === 'fortress' ? '#1e293b' : '#fef3c7',
+      strokeWidth: 3,
+      rotation: 0,
+      bannerStyle: settlement.type === 'fortress' ? 'stone_plaque' : 'none',
+      boxColor: settlement.type === 'fortress' ? '#334155' : undefined,
+      boxBorderColor: settlement.type === 'fortress' ? '#f59e0b' : undefined,
+      boxOpacity: settlement.type === 'fortress' ? 0.86 : undefined,
+      letterSpacing: 1,
+      curvature: 0,
+      stylePreset: 'standard',
+    }));
+    const nextStamps = [...stampsRef.current, ...generatedSettlementStamps];
+    const nextPaths = [...pathsRef.current, ...generatedPaths];
+    const nextLabels = [...labelsRef.current, ...generatedLabels];
+    stampsRef.current = nextStamps;
+    pathsRef.current = nextPaths;
+    labelsRef.current = nextLabels;
+    setStamps(nextStamps);
+    setPaths(nextPaths);
+    setLabels(nextLabels);
+    pushHistorySnapshot('Generate Terrain, Rivers & Settlements', {
+      stamps: nextStamps,
+      paths: nextPaths,
+      labels: nextLabels,
+    });
+    requestRedraw({ stamps: nextStamps, paths: nextPaths, labels: nextLabels });
+  }, [elevationConfig, pushHistorySnapshot, requestRedraw, setLabels, setPaths, setStamps]);
 
   const handleApplyExtractedMask = useCallback(
     (maskData: ImageData) => {
@@ -793,6 +989,18 @@ export default function App() {
     [pushHistorySnapshot, requestRedraw]
   );
 
+  const handleSampleMapColor = useCallback(() => {
+    const canvas = mainCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+    const x = Math.max(0, Math.min(canvas.width - 1, Math.round(cursorPos.x)));
+    const y = Math.max(0, Math.min(canvas.height - 1, Math.round(cursorPos.y)));
+    const pixel = ctx.getImageData(x, y, 1, 1).data;
+    const hex = `#${[pixel[0], pixel[1], pixel[2]].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+    setBrushSettings((previous) => ({ ...previous, brushColorOverride: hex }));
+  }, [cursorPos]);
+
   const handleSetReferenceMap = useCallback(
     (config: ReferenceMapConfig | null) => {
       if (config) {
@@ -817,6 +1025,25 @@ export default function App() {
     },
     [pushHistorySnapshot, requestRedraw]
   );
+
+  const handleCreateSampledTexture = useCallback((imageUrl: string, patternScale: number, target: 'land' | 'water') => {
+    const id = `sampled_texture_${Date.now()}`;
+    const sampledBiome: BiomeTexture = {
+      id,
+      name: `Sampled Texture ${customBiomes.length + 1}`,
+      color: '#75846b',
+      roughnessColor: '#4f5a49',
+      detailType: target === 'water' ? 'water' : 'custom_pattern',
+      defaultElevation: target === 'water' ? -5 : 10,
+      isPattern: true,
+      patternImageUrl: imageUrl,
+      patternScale,
+      isCustom: true,
+    };
+    imageManager.loadImage(imageUrl, id);
+    handleAddCustomBiome(sampledBiome);
+    setBrushSettings((previous) => ({ ...previous, selectedBiome: id, brushColorOverride: undefined }));
+  }, [customBiomes.length]);
 
   // --- Outliner Batch & Single Actions ---
   const handleDeleteBatchFromTable = useCallback(
@@ -880,11 +1107,28 @@ export default function App() {
 
   // --- Project JSON Save / Load & Restore Helpers ---
   const restoreProjectData = useCallback(
-    (parsed: any) => {
+    (input: unknown) => {
+      let parsed;
+      try {
+        parsed = normalizeProjectFile(input);
+      } catch (error) {
+        console.error('Failed to validate Cartomancer project', error);
+        return;
+      }
+
       if (parsed.project) {
         setProjectName(parsed.project.name || 'Imported Realm');
         if (parsed.project.waterDeepColor) setWaterDeepColor(parsed.project.waterDeepColor);
         if (parsed.project.waterShallowColor) setWaterShallowColor(parsed.project.waterShallowColor);
+        if (parsed.project.elevationConfig) setElevationConfig(parsed.project.elevationConfig);
+        if (parsed.project.referenceMap) {
+          setReferenceMap(parsed.project.referenceMap);
+          imageManager.loadImage(parsed.project.referenceMap.imageUrl);
+        }
+        if (parsed.project.importedMapLayer) {
+          setImportedMapLayer(parsed.project.importedMapLayer);
+          imageManager.loadImage(parsed.project.importedMapLayer.imageUrl);
+        }
         const nextStamps = parsed.project.stamps || [];
         const nextPaths = parsed.project.paths || [];
         const nextLabels = parsed.project.labels || [];
@@ -902,9 +1146,17 @@ export default function App() {
           imageManager.preloadDefaultAssets(parsed.project.customAssets);
         }
       }
+      if (parsed.heightFieldData && parsed.heightFieldMeta) {
+        const restoredField = deserializeHeightField(parsed.heightFieldData, parsed.heightFieldMeta);
+        if (restoredField) {
+          heightFieldRef.current = restoredField;
+          setNumericHeightfieldEnabled(true);
+        }
+      }
 
       const mask = maskCanvasRef.current;
       const texture = textureCanvasRef.current;
+      const waterTexture = waterTextureCanvasRef.current;
       const elevation = elevationCanvasRef.current;
 
       if (parsed.maskDataUrl && mask) {
@@ -929,6 +1181,17 @@ export default function App() {
         tImg.src = parsed.textureDataUrl;
       }
 
+      if (parsed.waterTextureDataUrl && waterTexture) {
+        const wImg = new Image();
+        wImg.onload = () => {
+          const wCtx = waterTexture.getContext('2d')!;
+          wCtx.clearRect(0, 0, waterTexture.width, waterTexture.height);
+          wCtx.drawImage(wImg, 0, 0);
+          requestRedraw();
+        };
+        wImg.src = parsed.waterTextureDataUrl;
+      }
+
       if (parsed.elevationDataUrl && elevation) {
         const eImg = new Image();
         eImg.onload = () => {
@@ -948,10 +1211,11 @@ export default function App() {
   const handleSaveJson = useCallback(() => {
     const mask = maskCanvasRef.current;
     const texture = textureCanvasRef.current;
+    const waterTexture = waterTextureCanvasRef.current;
     const elevation = elevationCanvasRef.current;
 
     const projectData: MapProject = {
-      version: '1.0.0',
+      version: CURRENT_PROJECT_VERSION,
       name: projectName,
       dimensions,
       backgroundColor: '#1a365d',
@@ -964,23 +1228,30 @@ export default function App() {
       paths: pathsRef.current,
       labels: labelsRef.current,
       customAssets,
+      elevationConfig,
+      referenceMap: referenceMap || undefined,
+      importedMapLayer: importedMapLayer || undefined,
     };
 
-    const fullExport = {
-      project: projectData,
-      maskDataUrl: mask?.toDataURL(),
-      textureDataUrl: texture?.toDataURL(),
-      elevationDataUrl: elevation?.toDataURL(),
-    };
+    const fullExport = createProjectFile(projectData, {
+      mask,
+      texture,
+      waterTexture,
+      elevation,
+      ...(numericHeightfieldEnabled && heightFieldRef.current ? {
+        heightFieldData: serializeHeightField(heightFieldRef.current),
+        heightFieldMeta: { cellSize: heightFieldRef.current.cellSize, width: heightFieldRef.current.width, height: heightFieldRef.current.height, seaLevel: heightFieldRef.current.seaLevel, minHeight: heightFieldRef.current.minHeight, maxHeight: heightFieldRef.current.maxHeight },
+      } : {}),
+    });
 
     const blob = new Blob([JSON.stringify(fullExport, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${projectName.toLowerCase().replace(/\s+/g, '_')}.cartomancer.json`;
+    a.download = `${safeProjectFilename(projectName)}.cartomancer.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [projectName, dimensions, waterDeepColor, waterShallowColor, layers, gridConfig, atmosphere, customAssets]);
+  }, [projectName, dimensions, waterDeepColor, waterShallowColor, layers, gridConfig, atmosphere, customAssets, elevationConfig, referenceMap]);
 
   const handleLoadJson = useCallback(() => {
     const input = document.createElement('input');
@@ -1011,12 +1282,13 @@ export default function App() {
   const getAutosavePayload = useCallback((): AutosavePayload | null => {
     const mask = maskCanvasRef.current;
     const texture = textureCanvasRef.current;
+    const waterTexture = waterTextureCanvasRef.current;
     const elevation = elevationCanvasRef.current;
-    if (!mask || !texture || !elevation) return null;
+    if (!mask || !texture || !waterTexture || !elevation) return null;
 
     return {
       project: {
-        version: '1.0.0',
+        version: CURRENT_PROJECT_VERSION,
         name: projectName,
         dimensions,
         backgroundColor: '#1a365d',
@@ -1029,12 +1301,20 @@ export default function App() {
         paths: pathsRef.current,
         labels: labelsRef.current,
         customAssets,
+        elevationConfig,
+        referenceMap: referenceMap || undefined,
+      importedMapLayer: importedMapLayer || undefined,
       },
       maskDataUrl: mask.toDataURL(),
       textureDataUrl: texture.toDataURL(),
+      waterTextureDataUrl: waterTexture.toDataURL(),
+      ...(numericHeightfieldEnabled && heightFieldRef.current ? {
+        heightFieldData: serializeHeightField(heightFieldRef.current),
+        heightFieldMeta: { cellSize: heightFieldRef.current.cellSize, width: heightFieldRef.current.width, height: heightFieldRef.current.height, seaLevel: heightFieldRef.current.seaLevel, minHeight: heightFieldRef.current.minHeight, maxHeight: heightFieldRef.current.maxHeight },
+      } : {}),
       elevationDataUrl: elevation.toDataURL(),
     };
-  }, [projectName, dimensions, waterDeepColor, waterShallowColor, layers, gridConfig, atmosphere, customAssets]);
+  }, [projectName, dimensions, waterDeepColor, waterShallowColor, layers, gridConfig, atmosphere, customAssets, elevationConfig, referenceMap]);
 
   const {
     isAutosaveEnabled,
@@ -1054,14 +1334,51 @@ export default function App() {
 
   // --- 10. Keyboard Shortcuts Hook ---
   const handleDeleteSelected = useCallback(() => {
-    if (selectedStampId) {
+    if (selectedStampIds.length > 1) {
+      const selected = new Set(selectedStampIds);
+      const remaining = stampsRef.current.filter((stamp) => !selected.has(stamp.id));
+      setStamps(remaining);
+      setSelectedStampIds([]);
+      setSelectedStampId(null);
+      pushHistorySnapshot('Delete Selected Stamps', { stamps: remaining });
+      requestRedraw({ stamps: remaining });
+    } else if (selectedStampId) {
       handleDeleteSelectedStamp();
+      setSelectedStampIds([]);
     } else if (selectedLabelId) {
       handleDeleteSelectedLabel();
     } else if (selectedPathId) {
       handleDeleteSelectedPath();
     }
-  }, [selectedStampId, selectedLabelId, selectedPathId, handleDeleteSelectedStamp, handleDeleteSelectedLabel, handleDeleteSelectedPath]);
+  }, [selectedStampIds, selectedStampId, selectedLabelId, selectedPathId, handleDeleteSelectedStamp, handleDeleteSelectedLabel, handleDeleteSelectedPath, pushHistorySnapshot, requestRedraw, setStamps, setSelectedStampId]);
+
+  const handleNudgeSelection = useCallback(
+    (dx: number, dy: number, recordHistory: boolean) => {
+      if (selectedStampIds.length > 0) {
+        if (recordHistory) pushHistorySnapshot('Nudge Selected Stamps');
+        const selected = new Set(selectedStampIds);
+        const next = stampsRef.current.map((stamp) =>
+          selected.has(stamp.id)
+            ? { ...stamp, x: Math.round(stamp.x + dx), y: Math.round(stamp.y + dy) }
+            : stamp
+        );
+        setStamps(next);
+        requestRedraw({ stamps: next });
+        return;
+      }
+      if (selectedStampId) {
+        if (recordHistory) pushHistorySnapshot('Nudge Stamp');
+        const next = stampsRef.current.map((stamp) =>
+          stamp.id === selectedStampId
+            ? { ...stamp, x: Math.round(stamp.x + dx), y: Math.round(stamp.y + dy) }
+            : stamp
+        );
+        setStamps(next);
+        requestRedraw({ stamps: next });
+      }
+    },
+    [pushHistorySnapshot, requestRedraw, selectedStampId, selectedStampIds, setStamps]
+  );
 
   const handleClearSelection = useCallback(() => {
     setSelectedStampId(null);
@@ -1103,9 +1420,32 @@ export default function App() {
     onZoomOut: zoomOut,
     onResetZoom: resetZoom,
     onFitToScreen: fitToScreen,
+    onNudgeSelection: handleNudgeSelection,
   });
 
   // --- Mouse & Pointer Events ---
+  const finishPolygonSelection = useCallback(() => {
+    if (polygonSelection.length < 3) return;
+    const inside = (x: number, y: number) => {
+      let hit = false;
+      for (let i = 0, j = polygonSelection.length - 1; i < polygonSelection.length; j = i++) {
+        const a = polygonSelection[i];
+        const b = polygonSelection[j];
+        if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+      }
+      return hit;
+    };
+    const selectedStamps = stampsRef.current.filter((stamp) => inside(stamp.x, stamp.y)).map((stamp) => stamp.id);
+    const selectedLabels = labelsRef.current.filter((label) => inside(label.x, label.y));
+    const selectedPaths = pathsRef.current.filter((path) => path.points.some((point) => inside(point.x, point.y)));
+    setSelectedStampIds(selectedStamps);
+    setSelectedStampId(selectedStamps[selectedStamps.length - 1] || null);
+    setSelectedLabelId(selectedLabels[selectedLabels.length - 1]?.id || null);
+    setSelectedPathId(selectedPaths[selectedPaths.length - 1]?.id || null);
+    setPolygonSelection([]);
+    requestRedraw();
+  }, [polygonSelection, requestRedraw, setSelectedLabelId, setSelectedPathId, setSelectedStampId, setSelectedStampIds]);
+
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button === 1 || e.altKey || isSpacePressed) {
       setIsPanning(true);
@@ -1116,6 +1456,25 @@ export default function App() {
     if (e.button !== 0) return;
     const { x, y } = getCanvasCoords(e);
 
+    if (activeTool === 'select' && e.shiftKey) {
+      setPolygonSelection((points) => [...points, { x, y }]);
+      return;
+    }
+
+    if (activeTool === 'fill') {
+      const mask = maskCanvasRef.current;
+      const landTexture = textureCanvasRef.current;
+      const waterTexture = waterTextureCanvasRef.current;
+      if (!mask || !landTexture || !waterTexture || layers.textures.locked) return;
+      const selected = [...DEFAULT_BIOMES, ...customBiomes].find((biome) => biome.id === brushSettings.selectedBiome) || DEFAULT_BIOMES[0];
+      const isWater = selected.detailType === 'water' || ['shallow_shallows', 'deep_ocean', 'river_water'].includes(selected.id);
+      const changed = fillContiguousRegion(mask, isWater ? waterTexture : landTexture, x, y, isWater ? 'water' : 'land', selected.color, brushSettings.opacity ?? 0.85);
+      if (changed) {
+        pushHistorySnapshot(isWater ? 'Fill Water Region' : 'Fill Land Biome Region');
+        requestRedraw();
+      }
+      return;
+    }
     if (activeTool === 'mask' || activeTool === 'brush' || activeTool === 'elevation') {
       if (activeTool === 'brush') {
         const mode = brushSettings.mode;
@@ -1133,7 +1492,9 @@ export default function App() {
         brushSettings,
         maskCanvas: maskCanvasRef.current,
         textureCanvas: textureCanvasRef.current,
+        waterTextureCanvas: waterTextureCanvasRef.current,
         elevationCanvas: elevationCanvasRef.current,
+        heightField: numericHeightfieldEnabled ? heightFieldRef.current : null,
         customBiomes,
         onRequestRedraw: requestRedraw,
       });
@@ -1147,9 +1508,18 @@ export default function App() {
     } else if (activeTool === 'path') {
       if (!isPathsActive()) return;
 
+      if (pathRestrictToLand && maskCanvasRef.current) {
+        const maskCtx = maskCanvasRef.current.getContext('2d', { willReadFrequently: true });
+        if (maskCtx) {
+          const px = Math.max(0, Math.min(maskCanvasRef.current.width - 1, Math.round(x)));
+          const py = Math.max(0, Math.min(maskCanvasRef.current.height - 1, Math.round(y)));
+          if (maskCtx.getImageData(px, py, 1, 1).data[3] < 40) return;
+        }
+      }
+
       let startPoint = { x, y };
       if (pathAutoMerge) {
-        const SNAP_DIST = 28;
+        const SNAP_DIST = Math.max(24, Math.min(72, pathWidth * 2.5 + 20));
         for (const ep of pathsRef.current) {
           if (ep.points.length < 2) continue;
           const isBothRiver = activePathStyle === 'river' && ep.style === 'river';
@@ -1215,23 +1585,28 @@ export default function App() {
       });
     } else if (activeTool === 'text') {
       if (!isLabelsActive()) return;
+      const labelPreset = textPresetStyle === 'regal_serif'
+        ? { fontSize: Math.max(activeFontSize, 30), fontFamily: "'Cinzel', serif", color: '#fef3c7', bannerStyle: 'royal_banner' as TextBannerStyle, letterSpacing: 3 }
+        : textPresetStyle === 'imperial_spaced'
+        ? { fontSize: Math.max(activeFontSize, 22), fontFamily: "'Cinzel', serif", color: '#fef3c7', bannerStyle: 'parchment_ribbon' as TextBannerStyle, letterSpacing: 6 }
+        : { fontSize: activeFontSize, fontFamily: activeFontFamily, color: activeTextColor, bannerStyle: activeBannerStyle, letterSpacing: 2 };
       handleAddLabel({
         id: `label_${Date.now()}`,
         text: activeTextString.trim() || 'Uncharted Region',
         x,
         y,
-        fontSize: activeFontSize,
+        fontSize: labelPreset.fontSize,
         scale: 1.0,
-        fontFamily: activeFontFamily,
-        color: activeTextColor,
+        fontFamily: labelPreset.fontFamily,
+        color: labelPreset.color,
         strokeColor: '#1e293b',
         strokeWidth: 3,
         rotation: 0,
-        bannerStyle: activeBannerStyle,
+        bannerStyle: labelPreset.bannerStyle,
         boxColor: '#fef3c7',
         boxBorderColor: '#92400e',
         boxOpacity: 0.88,
-        letterSpacing: textPresetStyle === 'imperial_spaced' ? 6 : 2,
+        letterSpacing: labelPreset.letterSpacing,
         curvature: textCurvature,
         stylePreset: textPresetStyle,
       });
@@ -1242,20 +1617,65 @@ export default function App() {
       const labelsActive = isLabelsActive();
       const pathsActive = isPathsActive();
 
-      // 1. If a stamp is selected, test handle drag or body move
+      // 1. If a path is selected, allow direct point editing before object hit tests.
+      if (selectedPathId && pathsActive) {
+        const selectedPath = pathsRef.current.find((p) => p.id === selectedPathId);
+        if (selectedPath) {
+          const pointIndex = selectedPath.points.findIndex(
+            (point) => Math.hypot(point.x - x, point.y - y) <= 10
+          );
+          if (pointIndex >= 0) {
+            pathNodeDragRef.current = { pathId: selectedPath.id, pointIndex, moved: false };
+            return;
+          }
+          // Clicking near a segment inserts a real editable node, avoiding the
+          // need to redraw an entire river just to adjust one bend.
+          for (let i = 0; i < selectedPath.points.length - 1; i++) {
+            const a = selectedPath.points[i];
+            const b = selectedPath.points[i + 1];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const length2 = dx * dx + dy * dy || 1;
+            const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / length2));
+            const projected = { x: a.x + t * dx, y: a.y + t * dy };
+            if (Math.hypot(projected.x - x, projected.y - y) <= 12) {
+              pushHistorySnapshot('Insert Path Node');
+              const inserted = { x: Math.round(projected.x), y: Math.round(projected.y) };
+              const updated = pathsRef.current.map((path) => path.id === selectedPath.id
+                ? { ...path, points: [...path.points.slice(0, i + 1), inserted, ...path.points.slice(i + 1)] }
+                : path);
+              pathsRef.current = updated;
+              setPaths(updated);
+              requestRedraw({ paths: updated });
+              pathNodeDragRef.current = { pathId: selectedPath.id, pointIndex: i + 1, moved: false };
+              return;
+            }
+          }
+        }
+      }
+
+      // 2. If a stamp is selected, test handle drag or body move
       if (selectedStampId && stampsActive) {
         const curStamp = stampsRef.current.find((s) => s.id === selectedStampId);
         if (curStamp) {
+          const transformGroup = selectedStampIds.length > 1
+            ? stampsRef.current.filter((stamp) => selectedStampIds.includes(stamp.id))
+            : [curStamp];
+          const transformCenter = {
+            x: transformGroup.reduce((sum, stamp) => sum + stamp.x, 0) / transformGroup.length,
+            y: transformGroup.reduce((sum, stamp) => sum + stamp.y, 0) / transformGroup.length,
+          };
           const handle = getStampHitHandle(x, y, curStamp);
           if (handle === 'rotate') {
             startTransform('rotate', {
               startX: x,
               startY: y,
               initialElement: { ...curStamp },
-              centerX: curStamp.x,
-              centerY: curStamp.y,
-              initialDist: Math.hypot(x - curStamp.x, y - curStamp.y),
-              initialAngle: (Math.atan2(y - curStamp.y, x - curStamp.x) * 180) / Math.PI,
+              selectedStampIds: selectedStampIds.length > 0 ? selectedStampIds : [curStamp.id],
+              centerX: transformCenter.x,
+              centerY: transformCenter.y,
+              initialDist: Math.hypot(x - transformCenter.x, y - transformCenter.y),
+              initialAngle: (Math.atan2(y - transformCenter.y, x - transformCenter.x) * 180) / Math.PI,
             });
             return;
           } else if (handle === 'scale') {
@@ -1263,9 +1683,10 @@ export default function App() {
               startX: x,
               startY: y,
               initialElement: { ...curStamp },
-              centerX: curStamp.x,
-              centerY: curStamp.y,
-              initialDist: Math.max(10, Math.hypot(x - curStamp.x, y - curStamp.y)),
+              selectedStampIds: selectedStampIds.length > 0 ? selectedStampIds : [curStamp.id],
+              centerX: transformCenter.x,
+              centerY: transformCenter.y,
+              initialDist: Math.max(10, Math.hypot(x - transformCenter.x, y - transformCenter.y)),
               initialAngle: 0,
             });
             return;
@@ -1274,8 +1695,9 @@ export default function App() {
               startX: x,
               startY: y,
               initialElement: { ...curStamp },
-              centerX: curStamp.x,
-              centerY: curStamp.y,
+              selectedStampIds: selectedStampIds.length > 0 ? selectedStampIds : [curStamp.id],
+              centerX: transformCenter.x,
+              centerY: transformCenter.y,
               initialDist: 0,
               initialAngle: 0,
             });
@@ -1301,33 +1723,14 @@ export default function App() {
         }
       }
 
-      // 3. Hit-test any stamp
-      if (stampsActive) {
-        const clickedStamp = getStampsFrontToBack(stampsRef.current).find((s) => isPointInStamp(x, y, s));
-        if (clickedStamp) {
-          setSelectedStampId(clickedStamp.id);
-          setSelectedLabelId(null);
-          setSelectedPathId(null);
-          startTransform('move', {
-            startX: x,
-            startY: y,
-            initialElement: { ...clickedStamp },
-            centerX: clickedStamp.x,
-            centerY: clickedStamp.y,
-            initialDist: 0,
-            initialAngle: 0,
-          });
-          requestRedraw();
-          return;
-        }
-      }
-
-      // 4. Hit-test any label
+      // 3. Hit-test labels first because labels are rendered above stamps.
+      // Selection priority must match the visual composite order.
       if (labelsActive) {
         const clickedLabel = [...labelsRef.current].reverse().find((l) => isPointInLabel(x, y, l));
         if (clickedLabel) {
           setSelectedLabelId(clickedLabel.id);
           setSelectedStampId(null);
+          setSelectedStampIds([]);
           setSelectedPathId(null);
           startTransform('move', {
             startX: x,
@@ -1343,20 +1746,80 @@ export default function App() {
         }
       }
 
+      // 4. Hit-test stamps in the same front-to-back order used by rendering.
+      if (stampsActive) {
+        const clickedStamp = getStampsFrontToBack(stampsRef.current).find((s) => isPointInStamp(x, y, s));
+        if (clickedStamp) {
+          if (e.shiftKey && selectedStampIds.includes(clickedStamp.id)) {
+            setSelectedStampIds((current) => {
+              const next = current.filter((id) => id !== clickedStamp.id);
+              setSelectedStampId(next[next.length - 1] || null);
+              return next;
+            });
+            setSelectedLabelId(null);
+            setSelectedPathId(null);
+            requestRedraw();
+            return;
+          }
+          if (e.shiftKey) {
+            setSelectedStampIds((current) => {
+              const next = current.includes(clickedStamp.id)
+                ? current.filter((id) => id !== clickedStamp.id)
+                : [...current, clickedStamp.id];
+              const primary = next[next.length - 1] || null;
+              setSelectedStampId(primary);
+              return next;
+            });
+          } else {
+            setSelectedStampIds([clickedStamp.id]);
+            setSelectedStampId(clickedStamp.id);
+          }
+          setSelectedLabelId(null);
+          setSelectedPathId(null);
+          startTransform('move', {
+            startX: x,
+            startY: y,
+            initialElement: { ...clickedStamp },
+            selectedStampIds: e.shiftKey
+              ? Array.from(new Set([...selectedStampIds, clickedStamp.id]))
+              : [clickedStamp.id],
+            centerX: clickedStamp.x,
+            centerY: clickedStamp.y,
+            initialDist: 0,
+            initialAngle: 0,
+          });
+          requestRedraw();
+          return;
+        }
+      }
+
       // 5. Hit-test any path
       if (pathsActive) {
         const clickedPath = [...pathsRef.current].reverse().find((p) => isPointNearPath(x, y, p, 24));
         if (clickedPath) {
           setSelectedPathId(clickedPath.id);
           setSelectedStampId(null);
+          setSelectedStampIds([]);
           setSelectedLabelId(null);
           requestRedraw();
           return;
         }
       }
 
+      // Empty select-space starts a marquee instead of immediately losing the
+      // user's ability to select nearby objects as a group.
+      const viewportRect = viewportRef.current?.getBoundingClientRect();
+      if (viewportRect && activeTool === 'select') {
+        const startX = e.clientX - viewportRect.left;
+        const startY = e.clientY - viewportRect.top;
+        const nextMarquee = { startX, startY, currentX: startX, currentY: startY };
+        marqueeRef.current = nextMarquee;
+        setMarquee(nextMarquee);
+      }
+
       // Clear selection if empty space clicked
       setSelectedStampId(null);
+      setSelectedStampIds([]);
       setSelectedLabelId(null);
       setSelectedPathId(null);
       requestRedraw();
@@ -1376,6 +1839,42 @@ export default function App() {
     }
 
     if (activeTool === 'select') {
+      if (marqueeRef.current && viewportRef.current) {
+        const rect = viewportRef.current.getBoundingClientRect();
+        const nextMarquee = {
+          ...marqueeRef.current,
+          currentX: e.clientX - rect.left,
+          currentY: e.clientY - rect.top,
+        };
+        marqueeRef.current = nextMarquee;
+        setMarquee(nextMarquee);
+        return;
+      }
+
+      const nodeDrag = pathNodeDragRef.current;
+      if (nodeDrag) {
+        const currentPath = pathsRef.current.find((p) => p.id === nodeDrag.pathId);
+        if (currentPath && currentPath.points[nodeDrag.pointIndex]) {
+          if (currentPath.restrictToLand && maskCanvasRef.current) {
+            const maskCtx = maskCanvasRef.current.getContext('2d', { willReadFrequently: true });
+            const px = Math.max(0, Math.min(maskCanvasRef.current.width - 1, Math.round(coords.x)));
+            const py = Math.max(0, Math.min(maskCanvasRef.current.height - 1, Math.round(coords.y)));
+            if (maskCtx && maskCtx.getImageData(px, py, 1, 1).data[3] < 40) return;
+          }
+          const nextPoints = currentPath.points.map((point, index) =>
+            index === nodeDrag.pointIndex ? { x: Math.round(coords.x), y: Math.round(coords.y) } : point
+          );
+          const nextPaths = pathsRef.current.map((path) =>
+            path.id === nodeDrag.pathId ? { ...path, points: nextPoints } : path
+          );
+          nodeDrag.moved = true;
+          pathsRef.current = nextPaths;
+          setPaths(nextPaths);
+          requestRedraw({ paths: nextPaths });
+        }
+        return;
+      }
+
       const handled = handleTransformMove(coords);
       if (handled) return;
     }
@@ -1399,9 +1898,11 @@ export default function App() {
           activeTool,
           brushSettings,
           maskCanvas: maskCanvasRef.current,
-          textureCanvas: textureCanvasRef.current,
-          elevationCanvas: elevationCanvasRef.current,
-          customBiomes,
+        textureCanvas: textureCanvasRef.current,
+        waterTextureCanvas: waterTextureCanvasRef.current,
+        elevationCanvas: elevationCanvasRef.current,
+        heightField: numericHeightfieldEnabled ? heightFieldRef.current : null,
+        customBiomes,
           onRequestRedraw: requestRedraw,
         }
       );
@@ -1410,7 +1911,7 @@ export default function App() {
     } else if (activePathDraft) {
       let nextPt = coords;
       if (pathAutoMerge) {
-        const SNAP_DIST = 28;
+        const SNAP_DIST = Math.max(24, Math.min(72, pathWidth * 2.5 + 20));
         for (const ep of pathsRef.current) {
           if (ep.points.length < 2) continue;
           const isBothRiver = activePathStyle === 'river' && ep.style === 'river';
@@ -1428,6 +1929,14 @@ export default function App() {
           }
         }
       }
+      if (pathRestrictToLand && maskCanvasRef.current) {
+        const maskCtx = maskCanvasRef.current.getContext('2d', { willReadFrequently: true });
+        if (maskCtx) {
+          const px = Math.max(0, Math.min(maskCanvasRef.current.width - 1, Math.round(nextPt.x)));
+          const py = Math.max(0, Math.min(maskCanvasRef.current.height - 1, Math.round(nextPt.y)));
+          if (maskCtx.getImageData(px, py, 1, 1).data[3] < 40) return;
+        }
+      }
       setActivePathDraft((prev) => (prev ? { ...prev, points: [...prev.points, nextPt] } : null));
     }
   };
@@ -1438,7 +1947,38 @@ export default function App() {
       return;
     }
 
+    const activeMarquee = marqueeRef.current;
+    if (activeMarquee) {
+      const toWorld = (screenX: number, screenY: number) => ({
+        x: (screenX - pan.x) / zoom,
+        y: (screenY - pan.y) / zoom,
+      });
+      const a = toWorld(activeMarquee.startX, activeMarquee.startY);
+      const b = toWorld(activeMarquee.currentX, activeMarquee.currentY);
+      const left = Math.min(a.x, b.x);
+      const right = Math.max(a.x, b.x);
+      const top = Math.min(a.y, b.y);
+      const bottom = Math.max(a.y, b.y);
+      const contained = stampsRef.current
+        .filter((stamp) => stamp.x >= left && stamp.x <= right && stamp.y >= top && stamp.y <= bottom)
+        .map((stamp) => stamp.id);
+      setSelectedStampIds(contained);
+      setSelectedStampId(contained[contained.length - 1] || null);
+      marqueeRef.current = null;
+      setMarquee(null);
+      requestRedraw();
+      return;
+    }
+
     finishTransform();
+
+    const nodeDrag = pathNodeDragRef.current;
+    if (nodeDrag) {
+      if (nodeDrag.moved) {
+        pushHistorySnapshot('Edit Path Node', { paths: pathsRef.current });
+      }
+      pathNodeDragRef.current = null;
+    }
 
     if (lastStampPointRef.current) {
       lastStampPointRef.current = null;
@@ -1477,7 +2017,7 @@ export default function App() {
       );
       const a = document.createElement('a');
       a.href = dataUrl;
-      a.download = `${projectName.toLowerCase().replace(/\s+/g, '_')}_heightmap.png`;
+      a.download = `${safeProjectFilename(projectName)}_heightmap.png`;
       a.click();
     } else if (format === 'topo_json') {
       const eCtx = elevation.getContext('2d')!;
@@ -1499,7 +2039,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${projectName.toLowerCase().replace(/\s+/g, '_')}_elevation.json`;
+      a.download = `${safeProjectFilename(projectName)}_elevation.json`;
       a.click();
       URL.revokeObjectURL(url);
     } else {
@@ -1512,6 +2052,7 @@ export default function App() {
           height: dimensions.height,
           maskCanvas: mask,
           textureCanvas: texture,
+          waterTextureCanvas: waterTextureCanvasRef.current!,
           elevationCanvas: elevation,
           stamps: stampsRef.current,
           paths: pathsRef.current,
@@ -1525,6 +2066,7 @@ export default function App() {
           coastlineRipples: brushSettings.coastlineRipples,
           coastlineColor: brushSettings.coastlineColor,
           topographicalView,
+          importedMapLayer,
         },
         scaleFactor,
         true,
@@ -1536,7 +2078,7 @@ export default function App() {
       a.href = dataUrl;
       const fileExt = format === 'jpeg' ? 'jpg' : 'png';
       const modeSuffix = atmosphere.preset === 'vintage_parchment' ? '_parchment_ink' : '';
-      a.download = `${projectName.toLowerCase().replace(/\s+/g, '_')}${modeSuffix}_${scaleFactor}x.${fileExt}`;
+      a.download = `${safeProjectFilename(projectName)}${modeSuffix}_${scaleFactor}x.${fileExt}`;
       a.click();
     }
   };
@@ -1579,7 +2121,11 @@ export default function App() {
         assetCount={stamps.length + paths.length + labels.length}
         onSaveJson={handleSaveJson}
         onLoadJson={handleLoadJson}
-        onNewMap={() => applyTemplate('blank', true)}
+        onNewMap={() => {
+          const hasWork = stampsRef.current.length > 0 || pathsRef.current.length > 0 || labelsRef.current.length > 0;
+          if (hasWork && !window.confirm('Start a new blank map? Your current work is saved locally when autosave is enabled.')) return;
+          applyTemplate('blank', true);
+        }}
         onOpenHelp={() => setIsHelpModalOpen(true)}
         onToggleLayersPanel={() => setIsLayersPanelOpen(!isLayersPanelOpen)}
         isLayersPanelOpen={isLayersPanelOpen}
@@ -1618,6 +2164,27 @@ export default function App() {
             onClose={() => setIsToolSettingsOpen(false)}
             brushSettings={brushSettings}
             onUpdateBrushSettings={(newSet) => setBrushSettings((prev) => ({ ...prev, ...newSet }))}
+            numericHeightfieldEnabled={numericHeightfieldEnabled}
+            onToggleNumericHeightfield={() => {
+              setNumericHeightfieldEnabled((enabled) => {
+                if (!enabled && !heightFieldRef.current) heightFieldRef.current = createHeightField(dimensions.width, dimensions.height, 4, 0);
+                if (enabled) setShowHeightfieldOverlay(false);
+                return !enabled;
+              });
+            }}
+            showHeightfieldOverlay={showHeightfieldOverlay}
+            onToggleHeightfieldOverlay={() => setShowHeightfieldOverlay((visible) => !visible)}
+            currentHeightMeters={numericHeightfieldEnabled && heightFieldRef.current ? sampleHeight(heightFieldRef.current, cursorPos.x, cursorPos.y) : null}
+            onSetHeightMeters={(height) => {
+              const field = heightFieldRef.current;
+              if (!field) return;
+              field.values[Math.max(0, Math.min(field.values.length - 1, Math.floor(cursorPos.y / field.cellSize) * field.width + Math.floor(cursorPos.x / field.cellSize)))] = encodeHeight(field, height);
+              requestRedraw();
+            }}
+            waterDeepColor={waterDeepColor}
+            waterShallowColor={waterShallowColor}
+            onWaterDeepColorChange={setWaterDeepColor}
+            onWaterShallowColorChange={setWaterShallowColor}
             selectedStamp={selectedStamp}
             selectedLabel={selectedLabel}
             selectedPath={selectedPath}
@@ -1669,10 +2236,12 @@ export default function App() {
             textPresetStyle={textPresetStyle}
             onTextPresetStyleChange={(style) => setTextPresetStyle(style as TextPresetStyle)}
             onHydraulicErosion={handleHydraulicErosion}
+            onDeriveTopography={handleDeriveTopography}
             activeBiome={activeBiome}
             onSelectBiome={(biome) => setBrushSettings((prev) => ({ ...prev, selectedBiome: biome }))}
             customBiomes={customBiomes}
             onOpenShaderLab={() => setIsShaderLabOpen(true)}
+            onSampleMapColor={handleSampleMapColor}
           />
         )}
 
@@ -1691,9 +2260,48 @@ export default function App() {
               : 'cursor-crosshair'
           }`}
           onMouseDown={handleMouseDown}
+          onDoubleClick={() => {
+            if (activeTool === 'select' && polygonSelection.length >= 3) finishPolygonSelection();
+          }}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
         >
+          {['mask', 'brush', 'elevation', 'eraser'].includes(activeTool) && (
+            <div
+              id="brush-cursor-preview"
+              className="absolute pointer-events-none z-30 rounded-full border-2 border-sky-500/80 bg-sky-300/10"
+              style={{
+                left: pan.x + cursorPos.x * zoom - brushSettings.size * zoom,
+                top: pan.y + cursorPos.y * zoom - brushSettings.size * zoom,
+                width: brushSettings.size * zoom * 2,
+                height: brushSettings.size * zoom * 2,
+              }}
+            />
+          )}
+          {polygonSelection.length > 0 && (
+            <svg className="absolute inset-0 pointer-events-none z-30 overflow-visible">
+              <polygon
+                points={polygonSelection.map((point) => `${pan.x + point.x * zoom},${pan.y + point.y * zoom}`).join(' ')}
+                fill="rgba(14, 165, 233, 0.12)"
+                stroke="rgba(14, 116, 144, 0.95)"
+                strokeWidth="2"
+                strokeDasharray="6 4"
+              />
+              {polygonSelection.map((point, index) => <circle key={index} cx={pan.x + point.x * zoom} cy={pan.y + point.y * zoom} r="4" fill="#0e7490" />)}
+            </svg>
+          )}
+          {marquee && (
+            <div
+              id="selection-marquee"
+              className="absolute pointer-events-none z-30 border border-[#0284c7] bg-[#38bdf8]/15"
+              style={{
+                left: Math.min(marquee.startX, marquee.currentX),
+                top: Math.min(marquee.startY, marquee.currentY),
+                width: Math.abs(marquee.currentX - marquee.startX),
+                height: Math.abs(marquee.currentY - marquee.startY),
+              }}
+            />
+          )}
           <div
             id="map-stage"
             className="absolute origin-top-left shadow-2xl select-none"
@@ -1746,6 +2354,8 @@ export default function App() {
             setAtmosphere(updated);
             requestRedraw({ atmosphere: updated });
           }}
+          stampCategoryVisibility={stampCategoryVisibility}
+          onToggleStampCategory={(category) => setStampCategoryVisibility((current) => ({ ...current, [category]: current[category] === false }))}
         />
       </div>
 
@@ -1809,7 +2419,13 @@ export default function App() {
         canvasHeight={dimensions.height}
         onApplyExtractedMask={handleApplyExtractedMask}
         onSetReferenceMap={handleSetReferenceMap}
+        onSetImportedMapLayer={(config) => {
+          setImportedMapLayer(config);
+          imageManager.loadImage(config.imageUrl);
+          requestRedraw();
+        }}
         onApplyBaseTextureImage={handleApplyBaseTextureImage}
+        onCreateSampledTexture={handleCreateSampledTexture}
       />
 
       <AssetOutlinerModal

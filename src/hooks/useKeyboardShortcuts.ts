@@ -16,6 +16,7 @@ interface UseKeyboardShortcutsProps {
   onZoomOut?: () => void;
   onResetZoom?: () => void;
   onFitToScreen?: () => void;
+  onNudgeSelection?: (dx: number, dy: number, recordHistory: boolean) => void;
 }
 
 export function useKeyboardShortcuts({
@@ -33,6 +34,7 @@ export function useKeyboardShortcuts({
   onZoomOut,
   onResetZoom,
   onFitToScreen,
+  onNudgeSelection,
 }: UseKeyboardShortcutsProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -139,6 +141,19 @@ export function useKeyboardShortcuts({
             onFlipSelectedX?.();
           }
           break;
+        case 'arrowleft':
+        case 'arrowright':
+        case 'arrowup':
+        case 'arrowdown': {
+          if (onNudgeSelection) {
+            e.preventDefault();
+            const step = e.shiftKey ? 10 : 1;
+            const dx = e.key.toLowerCase() === 'arrowleft' ? -step : e.key.toLowerCase() === 'arrowright' ? step : 0;
+            const dy = e.key.toLowerCase() === 'arrowup' ? -step : e.key.toLowerCase() === 'arrowdown' ? step : 0;
+            onNudgeSelection(dx, dy, !e.repeat);
+          }
+          break;
+        }
         case 'delete':
         case 'backspace':
           onDeleteSelected();
@@ -162,5 +177,6 @@ export function useKeyboardShortcuts({
     onFlipSelectedY,
     setActiveTool,
     setIsAssetOutlinerOpen,
+    onNudgeSelection,
   ]);
 }

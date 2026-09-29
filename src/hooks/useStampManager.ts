@@ -39,9 +39,16 @@ export function useStampManager({
 
       const newStamps: PlacedStamp[] = [];
 
+      // Use a radial/golden-angle distribution rather than independent rectangular
+      // random offsets. This keeps the existing tree/swamp/fort stamp sets from
+      // clumping in the centre of a scatter dab and produces repeatable spacing
+      // within one burst without requiring any new asset metadata.
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
       for (let i = 0; i < count; i++) {
-        const offsetX = isScatter ? (Math.random() - 0.5) * radius * 2 : 0;
-        const offsetY = isScatter ? (Math.random() - 0.5) * radius * 1.5 : 0;
+        const scatterT = count <= 1 ? 0 : Math.sqrt((i + 0.5) / count);
+        const scatterAngle = i * goldenAngle + Math.random() * 0.35;
+        const offsetX = isScatter ? Math.cos(scatterAngle) * radius * scatterT : 0;
+        const offsetY = isScatter ? Math.sin(scatterAngle) * radius * scatterT * 0.78 : 0;
         const variance = brushSettings.scaleVariance ?? 0.15;
         const rotVariance = brushSettings.rotationVariance ?? Math.round(variance * 40);
         const scaleJitter = variance > 0 ? 1 + (Math.random() - 0.5) * 2 * variance : 1;

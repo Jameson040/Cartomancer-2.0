@@ -43,12 +43,13 @@ export function useLabelManager({
   const handleUpdateSelectedLabel = useCallback(
     (updates: Partial<PlacedText>) => {
       if (!selectedLabelId || !isLabelsActive()) return;
+      pushHistorySnapshot('Edit Label', { labels: labelsRef.current });
       const next = labelsRef.current.map((l) => (l.id === selectedLabelId ? { ...l, ...updates } : l));
       labelsRef.current = next;
       setLabelsState(next);
       requestRedraw({ labels: next });
     },
-    [selectedLabelId, isLabelsActive, requestRedraw]
+    [selectedLabelId, isLabelsActive, pushHistorySnapshot, requestRedraw]
   );
 
   const handleDeleteSelectedLabel = useCallback(() => {

@@ -27,14 +27,13 @@ export function renderLandmassWithCoastlines(
   ctx.drawImage(maskCanvas, 0, 0, width, height);
   ctx.restore();
 
-  // Step A0.5: Auto-beaching (warm golden shallow sand barrier & turquoise surf)
+  // Step A0.5: Optional beach and surf treatment based on the binary landmask.
   if (autoBeaching) {
     ctx.save();
     ctx.shadowColor = '#d4b982';
     ctx.shadowBlur = 8;
     ctx.drawImage(maskCanvas, 0, 0, width, height);
     ctx.restore();
-
     ctx.save();
     ctx.shadowColor = '#38bdf8';
     ctx.shadowBlur = 18;

@@ -7,6 +7,7 @@ import {
   MousePointer,
   MountainSnow,
   Paintbrush,
+  PaintBucket,
   TrendingUp,
   TreePine,
   Spline,
@@ -54,6 +55,13 @@ const TOOLS: ToolDefinition[] = [
     hotkey: 'B',
     icon: Paintbrush,
     description: 'Paint biomes: meadows, deserts, snow, rocks, marshes, volcanic soil',
+  },
+  {
+    id: 'fill',
+    name: 'Region Fill',
+    hotkey: 'F',
+    icon: PaintBucket,
+    description: 'Fill a connected land, water, or biome region in one click',
   },
   {
     id: 'elevation',

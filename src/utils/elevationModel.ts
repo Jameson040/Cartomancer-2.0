@@ -5,6 +5,7 @@
  */
 
 import { WorldElevationConfig, PlacedStamp, PlacedPath, PathPoint } from '../types';
+import { fbm2D } from './proceduralNoise';
 
 export const DEFAULT_WORLD_ELEVATION: WorldElevationConfig = {
   minElevation: -15000,
@@ -463,13 +464,31 @@ export function deriveTopographyFromDrawnMap(
 
   // 6. Suggest Rivers based on Topographical Watershed Drainage
   const suggestedRivers: PlacedPath[] = [];
-  // Find high elevation mountain cells to start rivers
+  // Find high elevation cells to start rivers. Hand-painted/default maps often
+  // do not contain literal mountain stamps, so requiring 1,800m here made the
+  // generator silently return nothing. Use a world-scaled threshold and fall
+  // back to the highest interior land cells when the map is low-relief.
   const candidateSources: Array<{ c: number; r: number; elev: number }> = [];
+  const sourceThreshold = Math.min(1800, Math.max(180, config.maxElevation * 0.12));
   for (let r = 2; r < rows - 2; r += 4) {
     for (let c = 2; c < cols - 2; c += 4) {
       const idx = r * cols + c;
-      if (isLandGrid[idx] === 1 && heightsMeters[idx] > 1800) {
+      if (isLandGrid[idx] === 1 && heightsMeters[idx] > sourceThreshold) {
         candidateSources.push({ c, r, elev: heightsMeters[idx] });
+      }
+    }
+  }
+
+  // Low-relief maps still need useful test rivers. Choose the highest land
+  // cells, preferring points away from the coastline, instead of failing with
+  // an empty suggestion list.
+  if (candidateSources.length === 0) {
+    for (let r = 3; r < rows - 3; r += 3) {
+      for (let c = 3; c < cols - 3; c += 3) {
+        const idx = r * cols + c;
+        if (isLandGrid[idx] === 1 && distToCoast[idx] > 3) {
+          candidateSources.push({ c, r, elev: heightsMeters[idx] + distToCoast[idx] * 20 });
+        }
       }
     }
   }
@@ -500,7 +519,27 @@ export function deriveTopographyFromDrawnMap(
             const nIdx = nr * cols + nc;
             if (!visited.has(nIdx)) {
               const h = heightsMeters[nIdx];
-              if (!lowestNeighbor || h < lowestNeighbor.h) {
+              // A strict lowest-neighbour walk produces ruler-straight rivers
+              // on the derived low-relief field. Add a small deterministic
+              // meander cost while keeping elevation as the dominant factor.
+              const meander = fbm2D(
+                nc * 0.16 + sIdx * 13.7,
+                nr * 0.16 - sIdx * 9.1,
+                3,
+                0.55,
+                2.0
+              );
+              const score = h + meander * 70;
+              const currentScore = lowestNeighbor
+                ? lowestNeighbor.h + fbm2D(
+                    lowestNeighbor.c * 0.16 + sIdx * 13.7,
+                    lowestNeighbor.r * 0.16 - sIdx * 9.1,
+                    3,
+                    0.55,
+                    2.0
+                  ) * 70
+                : Number.POSITIVE_INFINITY;
+              if (!lowestNeighbor || score < currentScore) {
                 lowestNeighbor = { c: nc, r: nr, h };
               }
             }
@@ -599,6 +638,19 @@ export function deriveTopographyFromDrawnMap(
     if (suggestedSettlements.length >= 6) break;
   }
 
+  // Low-relief or very small maps may not satisfy the normal settlement
+  // elevation bands. Seed two river-connected market points so route generation
+  // remains useful instead of silently producing no roads.
+  if (suggestedSettlements.length < 2 && suggestedRivers.length > 0) {
+    const river = suggestedRivers[0];
+    const first = river.points[Math.min(2, river.points.length - 1)];
+    const last = river.points[Math.max(0, river.points.length - 3)];
+    suggestedSettlements.push(
+      { name: 'River Market', type: 'town', x: first.x, y: first.y, elevationMeters: 100 },
+      { name: 'River Crossing', type: 'town', x: last.x, y: last.y, elevationMeters: 100 }
+    );
+  }
+
   // 8. Suggest Trade Routes connecting settlements along lowest contour valleys
   const suggestedRoutes: PlacedPath[] = [];
   if (suggestedSettlements.length >= 2) {
@@ -610,8 +662,19 @@ export function deriveTopographyFromDrawnMap(
       const routePoints: PathPoint[] = [];
       for (let s = 0; s <= steps; s++) {
         const t = s / steps;
-        const lx = p1.x + (p2.x - p1.x) * t;
-        const ly = p1.y + (p2.y - p1.y) * t;
+        const baseX = p1.x + (p2.x - p1.x) * t;
+        const baseY = p1.y + (p2.y - p1.y) * t;
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const length = Math.max(1, Math.hypot(dx, dy));
+        const normalX = -dy / length;
+        const normalY = dx / length;
+        // Trade routes are influenced by settlement distance and terrain, not
+        // drawn as a perfectly straight ruler line. This creates a readable
+        // organic corridor while keeping both endpoints anchored.
+        const bend = Math.sin(t * Math.PI) * (18 + fbm2D(i * 0.7, s * 0.22, 3) * 24);
+        const lx = Math.max(0, Math.min(width, baseX + normalX * bend));
+        const ly = Math.max(0, Math.min(height, baseY + normalY * bend));
         routePoints.push({ x: Math.round(lx), y: Math.round(ly) });
       }
 
@@ -806,7 +869,11 @@ export function computeHydrologicalDrainagePath(
     const rx = Math.max(0, Math.min(width - 1, Math.round(x)));
     const ry = Math.max(0, Math.min(height - 1, Math.round(y)));
     const idx = (ry * width + rx) * 4;
-    return mData[idx + 3] < 35 || eData[idx] <= 128;
+    // The land mask is authoritative for coastlines. Treating every pixel at
+    // or below byte 128 as ocean makes unpainted/flat land reject rivers and
+    // is especially visible on template maps. Elevation controls flow, not
+    // whether a point belongs to the map's ocean layer.
+    return mData[idx + 3] < 35;
   };
 
   const points: PathPoint[] = [{ x: Math.round(startX), y: Math.round(startY) }];
