@@ -15,7 +15,9 @@ export function useAutosave({
   const [isAutosaveEnabled, setIsAutosaveEnabled] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem('cartomancer_autosave_enabled');
-      return stored === 'true';
+      // Local recovery is the safe default for a map editor. Users can turn
+      // it off explicitly from the autosave controls.
+      return stored !== 'false';
     } catch {
       return false;
     }
@@ -102,14 +104,22 @@ export function useAutosave({
           (draft.payload.project.stamps && draft.payload.project.stamps.length > 0) ||
           (draft.payload.project.paths && draft.payload.project.paths.length > 0) ||
           (draft.payload.project.labels && draft.payload.project.labels.length > 0) ||
-          Boolean(draft.payload.maskDataUrl);
+          Boolean(draft.payload.maskDataUrl) ||
+          Boolean(draft.payload.textureDataUrl) ||
+          Boolean(draft.payload.waterTextureDataUrl) ||
+          Boolean(draft.payload.heightFieldData);
 
         if (hasContent) {
-          setRecoveryDraft(draft);
+          // A saved local map is the user's working document. Restore it on
+          // startup rather than making the user choose between it and the
+          // welcome fixture.
+          // Defer until the editor has created its offscreen canvases and
+          // loaded the welcome fixture; the saved document then replaces it.
+          window.setTimeout(() => onRestoreDraft?.(draft), 0);
         }
       }
     });
-  }, []);
+  }, [onRestoreDraft]);
 
   const handleRestoreRecoveryDraft = useCallback(() => {
     if (recoveryDraft) {

@@ -9,6 +9,7 @@ import {
   MousePointer,
   MountainSnow,
   Paintbrush,
+  PaintBucket,
   TrendingUp,
   TreePine,
   Spline,
@@ -49,6 +50,16 @@ interface ToolSettingsPanelProps {
   onClose: () => void;
   brushSettings: BrushSettings;
   onUpdateBrushSettings: (settings: Partial<BrushSettings>) => void;
+  numericHeightfieldEnabled?: boolean;
+  onToggleNumericHeightfield?: () => void;
+  showHeightfieldOverlay?: boolean;
+  onToggleHeightfieldOverlay?: () => void;
+  currentHeightMeters?: number | null;
+  onSetHeightMeters?: (height: number) => void;
+  waterDeepColor: string;
+  waterShallowColor: string;
+  onWaterDeepColorChange: (color: string) => void;
+  onWaterShallowColorChange: (color: string) => void;
   // Selected items & transformations
   selectedStamp: PlacedStamp | null;
   selectedLabel: PlacedText | null;
@@ -102,11 +113,13 @@ interface ToolSettingsPanelProps {
   onTextPresetStyleChange: (style: string) => void;
   // Elevation options
   onHydraulicErosion: () => void;
+  onDeriveTopography?: () => void;
   // Biome Textures & Shader Lab
   activeBiome: BiomePreset;
   onSelectBiome: (biome: BiomePreset) => void;
   customBiomes?: BiomeTexture[];
   onOpenShaderLab?: () => void;
+  onSampleMapColor?: () => void;
 }
 
 const BIOMES: { id: BiomePreset; label: string; color: string; desc: string; defaultElevation: number }[] = [
@@ -152,6 +165,16 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
   onClose,
   brushSettings,
   onUpdateBrushSettings,
+  numericHeightfieldEnabled,
+  onToggleNumericHeightfield,
+  showHeightfieldOverlay,
+  onToggleHeightfieldOverlay,
+  currentHeightMeters,
+  onSetHeightMeters,
+  waterDeepColor,
+  waterShallowColor,
+  onWaterDeepColorChange,
+  onWaterShallowColorChange,
   selectedStamp,
   selectedLabel,
   selectedPath,
@@ -197,11 +220,15 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
   onBannerStyleChange,
   textCurvature,
   onTextCurvatureChange,
+  textPresetStyle,
+  onTextPresetStyleChange,
   onHydraulicErosion,
+  onDeriveTopography,
   activeBiome,
   onSelectBiome,
   customBiomes = [],
   onOpenShaderLab,
+  onSampleMapColor,
 }) => {
   // Tool meta title & icon
   const getToolMeta = () => {
@@ -212,6 +239,8 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
         return { title: 'Landmass Sculptor', icon: MountainSnow, subtitle: 'Add continents or carve oceans' };
       case 'brush':
         return { title: 'Biome Textures', icon: Paintbrush, subtitle: 'Paint natural terrain biomes' };
+      case 'fill':
+        return { title: 'Region Fill', icon: PaintBucket, subtitle: 'Fill one connected land or water region' };
       case 'elevation':
         return { title: 'Elevation Sculptor', icon: TrendingUp, subtitle: 'Contour heights & mountain ridges' };
       case 'stamp':
@@ -855,6 +884,25 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </div>
             </div>
 
+            {/* Water and coastline palette */}
+            <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
+              <span className="font-semibold text-slate-700 text-[11px]">Water Palette</span>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 text-[10px] text-slate-600">
+                  <input id="water-deep-color" type="color" value={waterDeepColor} onChange={(e) => onWaterDeepColorChange(e.target.value)} className="w-7 h-7 rounded cursor-pointer border-0 p-0" />
+                  Deep water
+                </label>
+                <label className="flex items-center gap-2 text-[10px] text-slate-600">
+                  <input id="water-shallow-color" type="color" value={waterShallowColor} onChange={(e) => onWaterShallowColorChange(e.target.value)} className="w-7 h-7 rounded cursor-pointer border-0 p-0" />
+                  Shallows
+                </label>
+              </div>
+              <label className="flex items-center gap-2 text-[10px] text-slate-600">
+                <input id="coastline-color" type="color" value={brushSettings.coastlineColor} onChange={(e) => onUpdateBrushSettings({ coastlineColor: e.target.value })} className="w-7 h-7 rounded cursor-pointer border-0 p-0" />
+                Coastline / foam
+              </label>
+            </div>
+
             {/* Brush Size */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
@@ -887,6 +935,25 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </div>
             </div>
 
+            {/* Edge Falloff */}
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="font-semibold text-slate-700">Edge Softness</span>
+                <span className="font-mono font-bold text-amber-700">{Math.round((brushSettings.softness ?? 0.5) * 100)}%</span>
+              </div>
+              <input
+                id="landmass-edge-softness"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={brushSettings.softness ?? 0.5}
+                onChange={(e) => onUpdateBrushSettings({ softness: Number(e.target.value) })}
+                className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                title="Controls the falloff of add-land and carve-ocean brush edges"
+              />
+            </div>
+
             {/* Fractal Roughness & Noise Octaves */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
@@ -911,6 +978,32 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
         {/* ============================================================== */}
         {activeTool === 'brush' && (
           <div className="flex flex-col gap-3.5">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Brush Presets</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { id: 'meadow', label: 'Soft Meadow', biome: 'lush_grass', size: 90, softness: 0.8, density: 0.45 },
+                  { id: 'forest', label: 'Dense Forest', biome: 'highland_forest', size: 65, softness: 0.55, density: 0.7 },
+                  { id: 'desert', label: 'Dry Desert', biome: 'golden_sand', size: 110, softness: 0.65, density: 0.5 },
+                  { id: 'mountain', label: 'Rocky Ground', biome: 'mountain_stone', size: 55, softness: 0.35, density: 0.75 },
+                ].map((preset) => (
+                  <button key={preset.id} onClick={() => onUpdateBrushSettings({ selectedBiome: preset.biome, size: preset.size, softness: preset.softness, density: preset.density, opacity: 0.8 })} className="rounded-lg border border-[#E2D6B5] bg-white px-2 py-1.5 text-[10px] font-semibold text-slate-700 hover:bg-[#FDF6E3]">
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg border border-violet-200 bg-violet-50 p-2.5 flex flex-col gap-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-violet-800">Texture Color</div>
+              <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-violet-900"><span>Target: {(['shallow_shallows', 'deep_ocean', 'river_water'].includes(brushSettings.selectedBiome) || customBiomes.some((biome) => biome.id === brushSettings.selectedBiome && biome.detailType === 'water')) ? 'WATER' : 'LAND'}</span><span className="rounded px-1.5 py-0.5 bg-white border border-violet-200">Layer constrained</span></div>
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded border border-black/20" style={{ backgroundColor: brushSettings.brushColorOverride || '#94a3b8' }} />
+                <span className="text-[10px] text-violet-900 flex-1">{brushSettings.brushColorOverride ? 'Sampled color active' : 'Using selected biome color'}</span>
+                {brushSettings.brushColorOverride && <button onClick={() => onUpdateBrushSettings({ brushColorOverride: undefined })} className="text-[10px] underline text-violet-800">Reset</button>}
+              </div>
+              {onSampleMapColor && <button onClick={onSampleMapColor} className="rounded border border-violet-300 bg-white px-2 py-1.5 text-[10px] font-semibold text-violet-900 hover:bg-violet-100">Sample color from map at cursor</button>}
+            </div>
+
             {/* Direct Shader Lab & Custom Biome Maker trigger */}
             {onOpenShaderLab && (
               <button
@@ -976,6 +1069,31 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 ))}
               </div>
             )}
+
+            {/* Water textures: paint lakes, seas, marshes, and coastal shelves directly. */}
+            <div className="flex flex-col gap-1.5 pb-2 border-b border-[#E2D6B5]/60">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Water Textures</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {BIOMES.filter((b) => ['shallow_shallows', 'deep_ocean', 'river_water'].includes(b.id)).map((b) => {
+                  const selected = (brushSettings.selectedBiome || activeBiome) === b.id;
+                  return (
+                    <button
+                      key={b.id}
+                      id={`water-texture-${b.id}`}
+                      onClick={() => {
+                        onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
+                        onSelectBiome(b.id);
+                      }}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${selected ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-400' : 'bg-white/70 border-[#E2D6B5] hover:bg-blue-50'}`}
+                    >
+                      <span className="block w-5 h-5 rounded-full border border-black/20 mb-1" style={{ backgroundColor: b.color }} />
+                      <span className="block text-[10px] font-semibold text-slate-700 leading-tight">{b.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-slate-500">Carve the water shape with Landmass Sculptor, then paint its texture here. No assets required.</p>
+            </div>
 
             {/* Standard Built-in Biomes */}
             <div className="flex flex-col gap-1.5">
@@ -1054,10 +1172,51 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
         )}
 
         {/* ============================================================== */}
+        {/* REGION FILL TOOL */}
+        {/* ============================================================== */}
+        {activeTool === 'fill' ? (
+          <div className="flex flex-col gap-3.5">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <div className="font-semibold">One-click region painting</div>
+              <p className="mt-1 text-[10px] leading-relaxed">Choose a land or water biome, then click a connected region. Land biomes fill land only; water biomes fill water only.</p>
+            </div>
+            <button onClick={() => onUpdateBrushSettings({ selectedBiome: 'lush_grass' })} className="rounded-lg border border-[#E2D6B5] bg-white px-3 py-2 text-xs font-semibold hover:bg-[#FDF6E3]">Use default land fill</button>
+            <button onClick={() => onUpdateBrushSettings({ selectedBiome: 'shallow_shallows' })} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-900 hover:bg-blue-100">Use shallow water fill</button>
+            <p className="text-[10px] text-slate-500">For another biome, select it in the Biome Texture Brush, then return here.</p>
+          </div>
+        ) : null}
+
+        {/* ============================================================== */}
         {/* 4. ELEVATION SCULPTOR */}
         {/* ============================================================== */}
         {activeTool === 'elevation' && (
           <div className="flex flex-col gap-3.5">
+            <button
+              type="button"
+              onClick={onToggleNumericHeightfield}
+              className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${numericHeightfieldEnabled ? 'border-emerald-500 bg-emerald-50 text-emerald-900' : 'border-[#E2D6B5] bg-white text-slate-700'}`}
+            >
+              <span className="font-semibold">Numeric heightfield: {numericHeightfieldEnabled ? 'On' : 'Off'}</span>
+              <span className="block text-[10px] opacity-75">Optional 4px grid, stored in meters. Off keeps the lightweight raster workflow.</span>
+            </button>
+            <button
+              type="button"
+              disabled={!numericHeightfieldEnabled}
+              onClick={onToggleHeightfieldOverlay}
+              className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${showHeightfieldOverlay ? 'border-sky-500 bg-sky-50 text-sky-900' : 'border-[#E2D6B5] bg-white text-slate-700'} disabled:opacity-40`}
+            >
+              {showHeightfieldOverlay ? 'Hide' : 'Show'} height colors and contour overlay
+            </button>
+            {numericHeightfieldEnabled && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50 p-2 text-xs text-sky-900">
+                <div className="font-semibold">Height inspector</div>
+                <div className="text-[10px] opacity-75">Hover the map to inspect the numeric grid.</div>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="font-mono">{currentHeightMeters == null ? '—' : `${currentHeightMeters.toFixed(1)} m`}</span>
+                  {onSetHeightMeters && currentHeightMeters != null && <input type="number" step="1" defaultValue={Math.round(currentHeightMeters)} onKeyDown={(e) => { if (e.key === 'Enter') onSetHeightMeters(Number((e.target as HTMLInputElement).value)); }} className="w-24 rounded border border-sky-200 px-1 py-0.5" />}
+                </div>
+              </div>
+            )}
             <span className="font-semibold text-slate-800 text-[11px]">Relief Mode</span>
             <div className="grid grid-cols-2 gap-1.5">
               {[
@@ -1078,6 +1237,27 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   {m.label}
                 </button>
               ))}
+            </div>
+
+            {/* Numeric height controls */}
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#E2D6B5]/50">
+              <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
+                {brushSettings.elevationMode === 'plateau' ? 'Target height (m)' : 'Height step (m)'}
+                <input
+                  id="height-paint-value"
+                  type="number"
+                  min="1"
+                  max="20000"
+                  step="1"
+                  value={Math.abs(brushSettings.elevation)}
+                  onChange={(e) => onUpdateBrushSettings({ elevation: Math.max(1, Number(e.target.value) || 1) })}
+                  className="rounded border border-[#E2D6B5] bg-white px-2 py-1.5 text-xs font-normal"
+                />
+              </label>
+              <div className="flex flex-col justify-end text-[10px] text-slate-500">
+                <span>Raise/lower uses this as meters per dab.</span>
+                <span>Plateau sets terrain toward this height.</span>
+              </div>
             </div>
 
             {/* Brush Size & Strength */}
@@ -1108,6 +1288,16 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               <p className="text-[10px] text-slate-500 leading-tight">
                 Simulates real rainfall runoff carving realistic natural river gullies and sedimentary deposits.
               </p>
+              {onDeriveTopography && (
+                <button
+                  id="generate-world-features-btn"
+                  onClick={onDeriveTopography}
+                  className="w-full py-2 px-3 rounded-lg bg-sky-100 hover:bg-sky-200 border border-sky-300 font-semibold text-sky-900 text-xs flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                  title="Derive elevation from the landmass and generate editable rivers, roads, and settlement labels"
+                >
+                  <MountainSnow className="w-4 h-4 text-sky-700" /> Generate World Features
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1681,6 +1871,21 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 className="w-full px-2.5 py-1.5 bg-white border border-[#E2D6B5] rounded-md text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-amber-500"
               />
               <span className="text-[10px] text-slate-500">Click on the map to stamp this label.</span>
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <span className="font-semibold text-slate-700 text-[11px]">Label Preset</span>
+              <div className="grid grid-cols-3 gap-1">
+                {[
+                  { id: 'standard', label: 'Standard' },
+                  { id: 'regal_serif', label: 'Regal' },
+                  { id: 'imperial_spaced', label: 'Imperial' },
+                ].map((preset) => (
+                  <button key={preset.id} onClick={() => onTextPresetStyleChange(preset.id)} className={`rounded border px-1 py-1.5 text-[10px] font-semibold ${textPresetStyle === preset.id ? 'border-amber-700 bg-amber-100 text-amber-900' : 'border-[#E2D6B5] bg-white text-slate-700 hover:bg-[#FDF6E3]'}`}>
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Font Family */}

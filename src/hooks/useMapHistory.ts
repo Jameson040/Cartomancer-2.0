@@ -6,6 +6,7 @@ export const MAX_HISTORY_STEPS = 25;
 interface UseMapHistoryProps {
   maskCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   textureCanvasRef: React.RefObject<HTMLCanvasElement | null>;
+  waterTextureCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   elevationCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   stampsRef: React.MutableRefObject<PlacedStamp[]>;
   pathsRef: React.MutableRefObject<PlacedPath[]>;
@@ -23,6 +24,7 @@ interface UseMapHistoryProps {
 export function useMapHistory({
   maskCanvasRef,
   textureCanvasRef,
+  waterTextureCanvasRef,
   elevationCanvasRef,
   stampsRef,
   pathsRef,
@@ -48,13 +50,15 @@ export function useMapHistory({
     ) => {
       const mask = maskCanvasRef.current;
       const texture = textureCanvasRef.current;
+      const waterTexture = waterTextureCanvasRef.current;
       const elevation = elevationCanvasRef.current;
-      if (!mask || !texture || !elevation) return;
+      if (!mask || !texture || !waterTexture || !elevation) return;
 
       const mCtx = mask.getContext('2d');
       const tCtx = texture.getContext('2d');
+      const wtCtx = waterTexture.getContext('2d');
       const eCtx = elevation.getContext('2d');
-      if (!mCtx || !tCtx || !eCtx) return;
+      if (!mCtx || !tCtx || !wtCtx || !eCtx) return;
 
       const targetStamps = overrides?.stamps ?? stampsRef.current;
       const targetPaths = overrides?.paths ?? pathsRef.current;
@@ -65,6 +69,7 @@ export function useMapHistory({
         timestamp: Date.now(),
         maskImageData: mCtx.getImageData(0, 0, mask.width, mask.height),
         textureImageData: tCtx.getImageData(0, 0, texture.width, texture.height),
+        waterTextureImageData: wtCtx.getImageData(0, 0, waterTexture.width, waterTexture.height),
         elevationImageData: eCtx.getImageData(0, 0, elevation.width, elevation.height),
         stamps: targetStamps.map((s) => ({ ...s })),
         paths: targetPaths.map((p) => ({ ...p, points: [...p.points] })),
@@ -80,7 +85,7 @@ export function useMapHistory({
       setUndoCount(Math.max(0, newHistory.length - 1));
       setRedoCount(0);
     },
-    [elevationCanvasRef, labelsRef, maskCanvasRef, pathsRef, stampsRef, textureCanvasRef]
+    [elevationCanvasRef, labelsRef, maskCanvasRef, pathsRef, stampsRef, textureCanvasRef, waterTextureCanvasRef]
   );
 
   const restoreStep = useCallback(
@@ -100,16 +105,20 @@ export function useMapHistory({
 
       const mask = maskCanvasRef.current;
       const texture = textureCanvasRef.current;
+      const waterTexture = waterTextureCanvasRef.current;
       const elevation = elevationCanvasRef.current;
-      if (!mask || !texture || !elevation) return;
+      if (!mask || !texture || !waterTexture || !elevation) return;
 
       // 2. Synchronously restore pixel data if ImageData is available (zero flicker)
-      if (step.maskImageData && step.textureImageData && step.elevationImageData) {
+      if (step.maskImageData && step.textureImageData && step.waterTextureImageData && step.elevationImageData) {
         const mCtx = mask.getContext('2d')!;
         mCtx.putImageData(step.maskImageData, 0, 0);
 
         const tCtx = texture.getContext('2d')!;
         tCtx.putImageData(step.textureImageData, 0, 0);
+
+        const wtCtx = waterTexture.getContext('2d')!;
+        wtCtx.putImageData(step.waterTextureImageData, 0, 0);
 
         const eCtx = elevation.getContext('2d')!;
         eCtx.putImageData(step.elevationImageData, 0, 0);
@@ -163,7 +172,7 @@ export function useMapHistory({
         eImg.src = step.elevationDataUrl;
       }
     },
-    [elevationCanvasRef, labelsRef, maskCanvasRef, pathsRef, requestRedraw, setLabels, setPaths, setStamps, stampsRef, textureCanvasRef]
+    [elevationCanvasRef, labelsRef, maskCanvasRef, pathsRef, requestRedraw, setLabels, setPaths, setStamps, stampsRef, textureCanvasRef, waterTextureCanvasRef]
   );
 
   const handleUndo = useCallback(() => {

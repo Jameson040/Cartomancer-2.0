@@ -16,8 +16,10 @@ import {
   Eye,
   SlidersHorizontal,
   Compass,
+  FileUp,
+  Paintbrush,
 } from 'lucide-react';
-import { ReferenceMapConfig } from '../types';
+import { ReferenceMapConfig, ImportedMapLayer } from '../types';
 
 interface MapImportModalProps {
   isOpen: boolean;
@@ -26,7 +28,9 @@ interface MapImportModalProps {
   canvasHeight: number;
   onApplyExtractedMask: (maskCanvasData: ImageData) => void;
   onSetReferenceMap: (config: ReferenceMapConfig) => void;
+  onSetImportedMapLayer: (config: ImportedMapLayer) => void;
   onApplyBaseTextureImage: (imgElement: HTMLImageElement) => void;
+  onCreateSampledTexture: (imageUrl: string, patternScale: number, target: 'land' | 'water') => void;
 }
 
 export const MapImportModal: React.FC<MapImportModalProps> = ({
@@ -36,9 +40,16 @@ export const MapImportModal: React.FC<MapImportModalProps> = ({
   canvasHeight,
   onApplyExtractedMask,
   onSetReferenceMap,
+  onSetImportedMapLayer,
   onApplyBaseTextureImage,
+  onCreateSampledTexture,
 }) => {
-  const [activeMode, setActiveMode] = useState<'extract_outline' | 'reference_trace' | 'base_texture'>('extract_outline');
+  const [activeMode, setActiveMode] = useState<'extract_outline' | 'reference_trace' | 'finished_map' | 'base_texture' | 'sampled_brush'>('extract_outline');
+  const [sampleCrop, setSampleCrop] = useState(0.35);
+  const [sampleOffsetX, setSampleOffsetX] = useState(0.5);
+  const [sampleOffsetY, setSampleOffsetY] = useState(0.5);
+  const [sampleTileScale, setSampleTileScale] = useState(64);
+  const [sampleTarget, setSampleTarget] = useState<'land' | 'water'>('land');
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
 
@@ -239,6 +250,31 @@ export const MapImportModal: React.FC<MapImportModalProps> = ({
     onClose();
   };
 
+  // Execute: Keep a finished PNG/JPG as a separate editable-map underlay.
+  const handleApplyFinishedMap = () => {
+    if (!imageSrc) return;
+    onSetImportedMapLayer({ imageUrl: imageSrc, opacity: 1, visible: true, blendMode: 'normal' });
+    onClose();
+  };
+
+  const handleApplySampledTexture = () => {
+    const image = loadedImageRef.current;
+    if (!image) return;
+    const sourceSize = Math.max(1, Math.min(image.naturalWidth, image.naturalHeight) * sampleCrop);
+    const sourceX = (image.naturalWidth - sourceSize) * sampleOffsetX;
+    const sourceY = (image.naturalHeight - sourceSize) * sampleOffsetY;
+    const crop = document.createElement('canvas');
+    crop.width = 256;
+    crop.height = 256;
+    const cropCtx = crop.getContext('2d');
+    if (!cropCtx) return;
+    cropCtx.imageSmoothingEnabled = true;
+    cropCtx.imageSmoothingQuality = 'high';
+    cropCtx.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, 256, 256);
+    onCreateSampledTexture(crop.toDataURL('image/png'), sampleTileScale, sampleTarget);
+    onClose();
+  };
+
   // Execute: Apply as Base Texture
   const handleApplyTexture = () => {
     if (!loadedImageRef.current) return;
@@ -305,6 +341,26 @@ export const MapImportModal: React.FC<MapImportModalProps> = ({
             <span>2. Draw Over as Reference Blueprint</span>
           </button>
           <button
+            onClick={() => setActiveMode('finished_map')}
+            className={`pb-2.5 text-xs font-bold flex items-center gap-1.5 border-b-2 transition-all ${
+              activeMode === 'finished_map'
+                ? 'border-[#8b5cf6] text-[#6d28d9]'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FileUp className="w-4 h-4" />
+            <span>3. Use Finished Map as Layer</span>
+          </button>
+          <button
+            onClick={() => setActiveMode('sampled_brush')}
+            className={`pb-2.5 text-xs font-bold flex items-center gap-1.5 border-b-2 transition-all ${
+              activeMode === 'sampled_brush' ? 'border-[#f97316] text-[#c2410c]' : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Paintbrush className="w-4 h-4" />
+            <span>5. Crop as Brush Texture</span>
+          </button>
+          <button
             onClick={() => setActiveMode('base_texture')}
             className={`pb-2.5 text-xs font-bold flex items-center gap-1.5 border-b-2 transition-all ${
               activeMode === 'base_texture'
@@ -313,7 +369,7 @@ export const MapImportModal: React.FC<MapImportModalProps> = ({
             }`}
           >
             <Layers className="w-4 h-4" />
-            <span>3. Paint as Base Texture</span>
+            <span>4. Paint as Base Texture</span>
           </button>
         </div>
 
@@ -478,6 +534,28 @@ export const MapImportModal: React.FC<MapImportModalProps> = ({
                 </div>
               )}
 
+              {/* Sampled Brush Texture Mode */}
+              {activeMode === 'sampled_brush' && (
+                <div className="p-4 bg-white rounded-xl border border-orange-200 space-y-3">
+                  <div className="text-xs font-bold text-orange-900">Create a reusable brush texture</div>
+                  <p className="text-[11px] text-slate-600">A centered square crop is taken from the image, not the whole image. The crop becomes a tiled brush texture and leaves the original import workflow untouched.</p>
+                  {imageSrc && <div className="h-32 rounded-lg border border-orange-200 overflow-hidden bg-slate-100" style={{ backgroundImage: `url(${imageSrc})`, backgroundRepeat: 'no-repeat', backgroundSize: `${100 / sampleCrop}%`, backgroundPosition: `${sampleOffsetX * 100}% ${sampleOffsetY * 100}%` }} />}
+                  <div>
+                    <div className="flex justify-between text-xs text-slate-600 mb-1"><span>Crop size</span><span>{Math.round(sampleCrop * 100)}%</span></div>
+                    <input type="range" min="0.1" max="1" step="0.05" value={sampleCrop} onChange={(e) => setSampleCrop(Number(e.target.value))} className="w-full accent-orange-600" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[10px] text-slate-600">Horizontal position<input type="range" min="0" max="1" step="0.01" value={sampleOffsetX} onChange={(e) => setSampleOffsetX(Number(e.target.value))} className="w-full accent-orange-600" /></label>
+                    <label className="text-[10px] text-slate-600">Vertical position<input type="range" min="0" max="1" step="0.01" value={sampleOffsetY} onChange={(e) => setSampleOffsetY(Number(e.target.value))} className="w-full accent-orange-600" /></label>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-xs text-slate-600 mb-1"><span>Brush tile scale</span><span>{sampleTileScale}px</span></div>
+                    <input type="range" min="24" max="256" step="8" value={sampleTileScale} onChange={(e) => setSampleTileScale(Number(e.target.value))} className="w-full accent-orange-600" />
+                  </div>
+                  <div className="flex gap-2"><button onClick={() => setSampleTarget('land')} className={`flex-1 rounded border px-2 py-1.5 text-[10px] font-semibold ${sampleTarget === 'land' ? 'bg-emerald-100 border-emerald-500 text-emerald-900' : 'bg-white border-slate-200'}`}>Land texture</button><button onClick={() => setSampleTarget('water')} className={`flex-1 rounded border px-2 py-1.5 text-[10px] font-semibold ${sampleTarget === 'water' ? 'bg-blue-100 border-blue-500 text-blue-900' : 'bg-white border-slate-200'}`}>Water texture</button></div>
+                </div>
+              )}
+
               {/* Base Texture Mode */}
               {activeMode === 'base_texture' && (
                 <div className="p-4 bg-white rounded-xl border border-[#E2D6B5]">
@@ -526,6 +604,26 @@ export const MapImportModal: React.FC<MapImportModalProps> = ({
                 >
                   <Eye className="w-4 h-4" />
                   <span>Set as Trace Blueprint</span>
+                </button>
+              )}
+
+              {activeMode === 'finished_map' && (
+                <button
+                  onClick={handleApplyFinishedMap}
+                  className="px-5 py-1.5 bg-gradient-to-r from-[#8b5cf6] to-[#c084fc] text-white font-bold rounded-lg text-xs transition-colors shadow-xs flex items-center gap-1.5"
+                >
+                  <FileUp className="w-4 h-4" />
+                  <span>Use as Finished Map Layer</span>
+                </button>
+              )}
+
+              {activeMode === 'sampled_brush' && (
+                <button
+                  onClick={handleApplySampledTexture}
+                  className="px-5 py-1.5 bg-gradient-to-r from-[#f97316] to-[#fb923c] text-white font-bold rounded-lg text-xs transition-colors shadow-xs flex items-center gap-1.5"
+                >
+                  <Paintbrush className="w-4 h-4" />
+                  <span>Create Brush Texture</span>
                 </button>
               )}
 

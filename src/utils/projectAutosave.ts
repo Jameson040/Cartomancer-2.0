@@ -13,6 +13,9 @@ export interface AutosavePayload {
   project: MapProject;
   maskDataUrl?: string;
   textureDataUrl?: string;
+  waterTextureDataUrl?: string;
+  heightFieldData?: string;
+  heightFieldMeta?: { cellSize: number; width: number; height: number; seaLevel: number; minHeight: number; maxHeight: number };
   elevationDataUrl?: string;
 }
 

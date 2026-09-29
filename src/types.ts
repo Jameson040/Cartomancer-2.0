@@ -6,6 +6,7 @@ export type ToolType =
   | 'select'
   | 'mask'       // Landmass sculptor (Add Land / Carve Sea)
   | 'brush'      // Biome texture painting
+  | 'fill'       // Contiguous land/water region fill
   | 'elevation'  // Height / relief contour sculpting
   | 'stamp'      // Asset placement & scatter brush
   | 'path'       // Rivers, roads, borders
@@ -130,6 +131,13 @@ export interface ReferenceMapConfig {
   blendMode: 'normal' | 'multiply' | 'screen' | 'overlay';
 }
 
+export interface ImportedMapLayer {
+  imageUrl: string;
+  opacity: number;
+  visible: boolean;
+  blendMode: 'normal' | 'multiply' | 'screen' | 'overlay';
+}
+
 export type GridType = 'none' | 'square' | 'hex_flat' | 'hex_pointy' | 'isometric';
 
 export interface GridConfig {
@@ -209,6 +217,7 @@ export interface BrushSettings {
   noiseRoughness?: number;     // 0 to 1 turbulence roughness (default 0.45)
   roughness?: number;          // Coastline / terrain fractal roughness (0.1 to 1.0)
   opacity?: number;            // Texture painting opacity (0.1 to 1.0)
+  brushColorOverride?: string;  // Sampled color used by solid texture painting
   elevationMode?: 'raise' | 'lower' | 'plateau' | 'smooth';
   slopeDeposition?: boolean;   // Slope-limited deposition & talus accumulation
   angleRepose?: number;        // Critical slope threshold before shedding scree
@@ -275,6 +284,8 @@ export interface MapProject {
   labels: PlacedText[];
   customAssets: StampAsset[];
   elevationConfig?: WorldElevationConfig;
+  referenceMap?: ReferenceMapConfig;
+  importedMapLayer?: ImportedMapLayer;
 }
 
 export interface RenderContextOptions {
@@ -283,7 +294,10 @@ export interface RenderContextOptions {
   height: number;
   maskCanvas: HTMLCanvasElement;
   textureCanvas: HTMLCanvasElement;
+  waterTextureCanvas: HTMLCanvasElement;
   elevationCanvas: HTMLCanvasElement;
+  heightField?: import('./utils/heightField').NumericHeightField | null;
+  showHeightfieldOverlay?: boolean;
   stamps: PlacedStamp[];
   paths: PlacedPath[];
   labels: PlacedText[];
@@ -312,6 +326,8 @@ export interface RenderContextOptions {
   topographicalView?: boolean;
   elevationConfig?: WorldElevationConfig;
   selectedStampId?: string | null;
+  selectedStampIds?: string[];
+  stampCategoryVisibility?: Record<string, boolean>;
   selectedLabelId?: string | null;
   selectedPathId?: string | null;
   customBiomes?: BiomeTexture[];
@@ -327,6 +343,7 @@ export interface RenderContextOptions {
     dashPattern?: number[];
   } | null;
   referenceMap?: ReferenceMapConfig | null;
+  importedMapLayer?: ImportedMapLayer | null;
   highResScale?: number;
 }
 
@@ -335,9 +352,13 @@ export interface HistoryStep {
   timestamp: number;
   maskImageData?: ImageData;
   textureImageData?: ImageData;
+  waterTextureImageData?: ImageData;
   elevationImageData?: ImageData;
   maskDataUrl?: string;
   textureDataUrl?: string;
+  waterTextureDataUrl?: string;
+  heightFieldData?: string;
+  heightFieldMeta?: { cellSize: number; width: number; height: number; seaLevel: number; minHeight: number; maxHeight: number };
   elevationDataUrl?: string;
   stamps: PlacedStamp[];
   paths: PlacedPath[];

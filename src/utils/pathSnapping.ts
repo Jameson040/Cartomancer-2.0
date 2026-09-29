@@ -48,7 +48,6 @@ export function mergeOrAddPath(
     return [...existingPaths, newPath];
   }
 
-  const SNAP_RADIUS = 32;
   const newPts = [...newPath.points];
   const nStart = newPts[0];
   const nEnd = newPts[newPts.length - 1];
@@ -59,6 +58,10 @@ export function mergeOrAddPath(
   for (let i = 0; i < existingPaths.length; i++) {
     const ep = existingPaths[i];
     if (ep.points.length < 2) continue;
+    // Use the visual widths as part of snapping tolerance. This makes close
+    // rivers/roads join reliably without requiring pixel-perfect endpoints,
+    // while keeping distant paths independent.
+    const SNAP_RADIUS = Math.max(24, Math.min(72, (newPath.width + ep.width) * 2.5 + 12));
     const isBothRiver = newPath.style === 'river' && ep.style === 'river';
     const isBothRoad = newPath.style !== 'river' && ep.style !== 'river';
     if (!isBothRiver && !isBothRoad) continue;
@@ -117,6 +120,7 @@ export function mergeOrAddPath(
     // Check if new path acts as a bridge connecting to another path endpoint
     const finalStart = combinedPoints[0];
     const finalEnd = combinedPoints[combinedPoints.length - 1];
+    const SNAP_RADIUS = Math.max(24, Math.min(72, (updatedPath.width + newPath.width) * 2.5 + 12));
 
     for (let j = 0; j < result.length; j++) {
       if (j === mergedTargetIdx) continue;
@@ -145,6 +149,7 @@ export function mergeOrAddPath(
 
   // Branch / T-junction snapping to road/river centerline
   for (const ep of existingPaths) {
+    const SNAP_RADIUS = Math.max(24, Math.min(72, (newPath.width + ep.width) * 2.5 + 12));
     if (ep.points.length < 2) continue;
     for (let i = 0; i < ep.points.length - 1; i++) {
       const p1 = ep.points[i];

@@ -3,11 +3,47 @@
  */
 import { PlacedStamp } from '../../types';
 import { imageManager } from '../imageManager';
+import { getStampGeometry } from '../stampGeometry';
+
+// Tint canvases are reused between frames. Creating one canvas per stamp on every
+// redraw becomes very expensive once a forest or swamp brush places hundreds of
+// existing PNG assets on the map.
+const tintCache = new Map<string, HTMLCanvasElement>();
+
+function getTintedImage(img: HTMLImageElement, assetId: string, tint: string): HTMLCanvasElement {
+  const key = `${assetId}:${tint}`;
+  const cached = tintCache.get(key);
+  if (cached && cached.width === img.width && cached.height === img.height) return cached;
+
+  const tinted = document.createElement('canvas');
+  tinted.width = img.width;
+  tinted.height = img.height;
+  const tintCtx = tinted.getContext('2d');
+  if (!tintCtx) return tinted;
+  tintCtx.drawImage(img, 0, 0);
+  tintCtx.globalCompositeOperation = 'source-atop';
+  tintCtx.fillStyle = tint;
+  tintCtx.globalAlpha = 0.5;
+  tintCtx.fillRect(0, 0, img.width, img.height);
+  tintCache.set(key, tinted);
+  return tinted;
+}
+
+export function clearStampTintCache(assetId?: string): void {
+  if (!assetId) {
+    tintCache.clear();
+    return;
+  }
+  for (const key of tintCache.keys()) {
+    if (key.startsWith(`${assetId}:`)) tintCache.delete(key);
+  }
+}
 
 export function renderStamps(
   ctx: CanvasRenderingContext2D,
   stamps: PlacedStamp[],
-  selectedStampId?: string | null
+  selectedStampId?: string | null,
+  selectedStampIds: string[] = []
 ): void {
   const sorted = [...stamps].sort((a, b) => {
     if (a.layer !== b.layer) {
@@ -28,8 +64,9 @@ export function renderStamps(
       ctx.rotate((stamp.rotation * Math.PI) / 180);
     }
 
-    const drawW = img.width * stamp.scale * 0.7;
-    const drawH = img.height * stamp.scale * 0.7;
+    const geometry = getStampGeometry(img.width, img.height, stamp.scale);
+    const drawW = geometry.width;
+    const drawH = geometry.height;
 
     // Draw the stamp image with Flip X and Flip Y transformations centered on the stamp
     ctx.save();
@@ -42,37 +79,28 @@ export function renderStamps(
     }
     ctx.translate(0, -centerY);
 
-    // Seasonal / environmental tinting
-    if (stamp.tint && stamp.tint !== '') {
-      const tintCanvas = document.createElement('canvas');
-      tintCanvas.width = img.width;
-      tintCanvas.height = img.height;
-      const tiCtx = tintCanvas.getContext('2d');
-      if (tiCtx) {
-        tiCtx.drawImage(img, 0, 0);
-        tiCtx.globalCompositeOperation = 'source-atop';
-        tiCtx.fillStyle = stamp.tint;
-        tiCtx.globalAlpha = 0.5;
-        tiCtx.fillRect(0, 0, img.width, img.height);
-        ctx.drawImage(tintCanvas, -drawW / 2, -drawH * 0.75, drawW, drawH);
-      } else {
-        ctx.drawImage(img, -drawW / 2, -drawH * 0.75, drawW, drawH);
-      }
-    } else {
-      ctx.drawImage(img, -drawW / 2, -drawH * 0.75, drawW, drawH);
-    }
+    // Seasonal / environmental tinting. Reuse the transformed source canvas so
+    // large existing asset scatter fields remain responsive while panning/painting.
+    const source = stamp.tint && stamp.tint !== ''
+      ? getTintedImage(img, stamp.assetId, stamp.tint)
+      : img;
+    ctx.drawImage(source, -drawW / 2, -drawH * 0.75, drawW, drawH);
     ctx.restore();
 
-    // Selection bounding box indicator
-    if (selectedStampId === stamp.id) {
-      ctx.strokeStyle = '#f59e0b';
+    // Selection bounding box indicator. Secondary selections get an outline;
+    // only the primary object gets transform handles.
+    const isSelected = selectedStampId === stamp.id || selectedStampIds.includes(stamp.id);
+    const isPrimary = selectedStampId === stamp.id;
+    if (isSelected) {
+      ctx.strokeStyle = isPrimary ? '#f59e0b' : '#38bdf8';
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 4]);
       ctx.strokeRect(-drawW / 2 - 4, -drawH * 0.75 - 4, drawW + 8, drawH + 8);
       ctx.setLineDash([]);
 
-      // Rotation stem and handle (top center)
-      ctx.beginPath();
+      if (isPrimary) {
+        // Rotation stem and handle (top center)
+        ctx.beginPath();
       ctx.moveTo(0, -drawH * 0.75 - 4);
       ctx.lineTo(0, -drawH * 0.75 - 18);
       ctx.strokeStyle = '#f59e0b';
@@ -101,7 +129,8 @@ export function renderStamps(
       ctx.lineWidth = 2;
       for (const [hx, hy] of cornerPositions) {
         ctx.fillRect(hx - half, hy - half, handleSize, handleSize);
-        ctx.strokeRect(hx - half, hy - half, handleSize, handleSize);
+          ctx.strokeRect(hx - half, hy - half, handleSize, handleSize);
+        }
       }
     }
 

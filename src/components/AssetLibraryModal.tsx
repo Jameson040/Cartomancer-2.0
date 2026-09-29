@@ -30,6 +30,7 @@ import {
   ChevronUp,
   HardDrive,
   CheckCircle2,
+  Star,
 } from 'lucide-react';
 
 interface AssetLibraryModalProps {
@@ -44,8 +45,10 @@ interface AssetLibraryModalProps {
   onClearAllCustomAssets?: () => void;
 }
 
-const BASE_CATEGORIES: { id: StampCategory | 'all'; label: string }[] = [
+const BASE_CATEGORIES: { id: StampCategory | 'all' | 'favorites' | 'recent'; label: string }[] = [
   { id: 'all', label: 'All Assets' },
+  { id: 'favorites', label: 'Favorites' },
+  { id: 'recent', label: 'Recently Used' },
   { id: 'trees', label: 'Trees & Flora' },
   { id: 'swamps', label: 'Swamps & Marshes' },
   { id: 'forts', label: 'Forts & Citadels' },
@@ -73,7 +76,13 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
   onDeleteCustomAsset,
   onClearAllCustomAssets,
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<StampCategory | 'all'>('all');
+  const [selectedCategory, setSelectedCategory] = useState<StampCategory | 'all' | 'favorites' | 'recent'>('all');
+  const [favoriteAssetIds, setFavoriteAssetIds] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('cartomancer_favorite_assets') || '[]'); } catch { return []; }
+  });
+  const [recentAssetIds, setRecentAssetIds] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('cartomancer_recent_assets') || '[]'); } catch { return []; }
+  });
   const [currentView, setCurrentView] = useState<'browser' | 'import'>(
     customAssets.length === 0 ? 'import' : 'browser'
   );
@@ -120,7 +129,7 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
         map.set(a.category, formatTitle(a.category));
       }
     }
-    const list: { id: StampCategory | 'all'; label: string }[] = [];
+    const list: { id: StampCategory | 'all' | 'favorites' | 'recent'; label: string }[] = [];
     for (const [id, label] of map.entries()) {
       list.push({ id: id as StampCategory, label });
     }
@@ -135,6 +144,10 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
           ? true
           : selectedCategory === 'custom'
           ? asset.isCustom
+          : selectedCategory === 'favorites'
+          ? favoriteAssetIds.includes(asset.id)
+          : selectedCategory === 'recent'
+          ? recentAssetIds.includes(asset.id)
           : asset.category === selectedCategory;
 
       if (!matchesCategory) return false;
@@ -145,7 +158,23 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
         (asset.tags && asset.tags.some((t) => t.toLowerCase().includes(q)))
       );
     });
-  }, [allAssets, selectedCategory, searchQuery]);
+  }, [allAssets, selectedCategory, searchQuery, favoriteAssetIds, recentAssetIds]);
+
+  const toggleFavorite = (assetId: string) => {
+    setFavoriteAssetIds((current) => {
+      const next = current.includes(assetId) ? current.filter((id) => id !== assetId) : [...current, assetId];
+      localStorage.setItem('cartomancer_favorite_assets', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const rememberRecent = (assetId: string) => {
+    setRecentAssetIds((current) => {
+      const next = [assetId, ...current.filter((id) => id !== assetId)].slice(0, 24);
+      localStorage.setItem('cartomancer_recent_assets', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const displayedAssets = useMemo(
     () => filteredAssets.slice(0, visibleCount),
@@ -1087,6 +1116,7 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                           <div
                             key={asset.id}
                             onClick={() => {
+                              rememberRecent(asset.id);
                               onSelectAsset(asset);
                               onClose();
                             }}
@@ -1127,6 +1157,14 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                                 <span>{asset.category.replace('_', ' ')}</span>
                               </div>
                             </div>
+
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleFavorite(asset.id); }}
+                              className={`absolute top-2 left-2 rounded p-1 border transition-opacity ${favoriteAssetIds.includes(asset.id) ? 'bg-amber-100 text-amber-600 border-amber-300 opacity-100' : 'bg-white/90 text-slate-400 border-slate-200 opacity-0 group-hover:opacity-100'}`}
+                              title={favoriteAssetIds.includes(asset.id) ? 'Remove favorite' : 'Add favorite'}
+                            >
+                              <Star className="w-3.5 h-3.5" fill={favoriteAssetIds.includes(asset.id) ? 'currentColor' : 'none'} />
+                            </button>
 
                             {/* Custom asset delete button */}
                             {asset.isCustom && (

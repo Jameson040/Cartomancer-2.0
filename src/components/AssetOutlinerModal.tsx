@@ -93,6 +93,7 @@ export const AssetOutlinerModal: React.FC<AssetOutlinerModalProps> = ({
       y: number;
       details: string;
       svgData?: string;
+      imageUrl?: string;
       color?: string;
       isSelected: boolean;
     }> = [];
@@ -111,6 +112,7 @@ export const AssetOutlinerModal: React.FC<AssetOutlinerModalProps> = ({
         y: Math.round(s.y),
         details: `Scale: ${s.scale.toFixed(2)}x • Rot: ${Math.round(s.rotation)}°${flipInfo}`,
         svgData: asset?.svgData,
+        imageUrl: asset?.imageUrl,
         isSelected: selectedStampId === s.id,
       });
     });
@@ -265,6 +267,15 @@ export const AssetOutlinerModal: React.FC<AssetOutlinerModalProps> = ({
     });
 
     if (stampIds.length === 0 && pathIds.length === 0 && labelIds.length === 0) return;
+
+    const selectedNames = Object.entries(selectedItems)
+      .filter(([, isSelected]) => isSelected)
+      .map(([id]) => items.find((item) => item.id === id)?.name)
+      .filter(Boolean) as string[];
+    const previewNames = selectedNames.slice(0, 8).join('\n• ');
+    const suffix = selectedNames.length > 8 ? `\n• …and ${selectedNames.length - 8} more` : '';
+    if (!window.confirm(`Delete ${selectedNames.length} selected map element(s)?\n\n• ${previewNames}${suffix}`)) return;
+
     onDeleteBatch({ stampIds, pathIds, labelIds });
     setSelectedItems({});
   };
@@ -623,7 +634,14 @@ export const AssetOutlinerModal: React.FC<AssetOutlinerModalProps> = ({
                       {/* Preview */}
                       <td className="py-2.5 px-3 text-center">
                         <div className="w-9 h-9 rounded-md bg-[#F4EBD0] border border-[#E2D6B5] flex items-center justify-center overflow-hidden mx-auto">
-                          {item.rawType === 'stamp' && item.svgData ? (
+                          {item.rawType === 'stamp' && item.imageUrl ? (
+                            <img
+                              src={item.imageUrl}
+                              alt={item.name}
+                              className="w-full h-full object-contain p-0.5"
+                              draggable={false}
+                            />
+                          ) : item.rawType === 'stamp' && item.svgData ? (
                             <div
                               className="w-7 h-7 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain"
                               dangerouslySetInnerHTML={{ __html: item.svgData }}

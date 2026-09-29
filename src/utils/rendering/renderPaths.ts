@@ -238,6 +238,19 @@ export function renderPaths(
         ctx.setLineDash([6, 6]);
         strokeSmoothPath(ctx, selectedP.points, selectedP.smoothed);
       }
+
+      // Editable node handles make a selected river/road immediately
+      // understandable and provide a precise target for point dragging.
+      ctx.setLineDash([]);
+      for (const point of selectedP.points) {
+        ctx.fillStyle = '#fff7ed';
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
       ctx.restore();
     }
   }

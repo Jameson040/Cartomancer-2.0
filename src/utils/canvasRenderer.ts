@@ -18,6 +18,7 @@ import {
 } from '../types';
 import { imageManager } from './imageManager';
 import { DEFAULT_WORLD_ELEVATION } from './elevationModel';
+import { renderHeightfieldOverlay } from './rendering/renderHeightfieldOverlay';
 import { ParchmentFilterOptions } from './cannyEdgeFilter';
 import {
   renderWater,
@@ -54,7 +55,10 @@ export class CanvasRenderer {
       height,
       maskCanvas,
       textureCanvas,
+      waterTextureCanvas,
       elevationCanvas,
+      heightField,
+      showHeightfieldOverlay = false,
       stamps,
       paths,
       labels,
@@ -71,8 +75,9 @@ export class CanvasRenderer {
       contourInterval = 20,
       topographicalView,
       elevationConfig = DEFAULT_WORLD_ELEVATION,
-      selectedStampId,
-      selectedLabelId,
+        selectedStampId,
+        selectedStampIds,
+        selectedLabelId,
       activePathDraft,
     } = options;
 
@@ -117,11 +122,38 @@ export class CanvasRenderer {
       }
     }
 
-    // 3. TEXTURE BIOME PAINTING (Masked inside landmass)
-    if (layers.textures.visible && layers.landmass.visible) {
+    // 2.5 FINISHED MAP UNDERLAY: a separate raster layer for an already-made map.
+    // It does not replace the mask, biomes, elevation, or vector layers.
+    if (options.importedMapLayer?.visible && options.importedMapLayer.imageUrl) {
+      const imported = imageManager.getImageByUrl(options.importedMapLayer.imageUrl);
+      if (imported) {
+        ctx.save();
+        ctx.globalAlpha = options.importedMapLayer.opacity;
+        ctx.globalCompositeOperation = options.importedMapLayer.blendMode === 'normal' ? 'source-over' : (options.importedMapLayer.blendMode || 'source-over');
+        ctx.drawImage(imported, 0, 0, width, height);
+        ctx.restore();
+      }
+    }
+
+    // 3. SEPARATED LAND AND WATER TEXTURE PAINTING
+    if (layers.textures.visible) {
       ctx.globalAlpha = layers.textures.opacity;
       renderTexturesMasked(ctx, width, height, maskCanvas, textureCanvas);
+      const waterLayer = document.createElement('canvas');
+      waterLayer.width = width;
+      waterLayer.height = height;
+      const waterCtx = waterLayer.getContext('2d');
+      if (waterCtx) {
+        waterCtx.drawImage(waterTextureCanvas, 0, 0, width, height);
+        waterCtx.globalCompositeOperation = 'destination-out';
+        waterCtx.drawImage(maskCanvas, 0, 0, width, height);
+        ctx.drawImage(waterLayer, 0, 0, width, height);
+      }
       ctx.globalAlpha = 1.0;
+    }
+
+    if (showHeightfieldOverlay && heightField) {
+      renderHeightfieldOverlay(ctx, heightField);
     }
 
     // 4. ELEVATION / TOPOGRAPHY LAYER
@@ -173,7 +205,7 @@ export class CanvasRenderer {
     // 6. STAMPS / ASSETS (Depth sorted)
     if (layers.stamps.visible) {
       ctx.globalAlpha = layers.stamps.opacity;
-      renderStamps(ctx, stamps, selectedStampId);
+      renderStamps(ctx, stamps, selectedStampId, selectedStampIds);
       ctx.globalAlpha = 1.0;
     }
 

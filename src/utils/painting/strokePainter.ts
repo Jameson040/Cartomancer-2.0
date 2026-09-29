@@ -12,6 +12,41 @@ import {
   drawTurbulentElevationDab,
 } from '../proceduralNoise';
 import { applySlopeLimitedDeposition } from '../elevationModel';
+import { NumericHeightField, paintHeight } from '../heightField';
+
+function drawSoftMaskDab(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  roughness: number,
+  alpha: number,
+  softness: number,
+  carve: boolean
+): void {
+  const size = Math.ceil(radius * 2 + 4);
+  const dab = document.createElement('canvas');
+  dab.width = size;
+  dab.height = size;
+  const dabCtx = dab.getContext('2d');
+  if (!dabCtx) return;
+  dabCtx.save();
+  dabCtx.translate(size / 2 - x, size / 2 - y);
+  drawFractalDab(dabCtx, x, y, radius, roughness, '#ffffff', alpha);
+  dabCtx.restore();
+  dabCtx.globalCompositeOperation = 'destination-in';
+  const center = size / 2;
+  const inner = center * Math.max(0, 1 - softness) * 0.65;
+  const feather = dabCtx.createRadialGradient(center, center, inner, center, center, center);
+  feather.addColorStop(0, 'rgba(255,255,255,1)');
+  feather.addColorStop(1, 'rgba(255,255,255,0)');
+  dabCtx.fillStyle = feather;
+  dabCtx.fillRect(0, 0, size, size);
+  ctx.save();
+  ctx.globalCompositeOperation = carve ? 'destination-out' : 'source-over';
+  ctx.drawImage(dab, x - size / 2, y - size / 2);
+  ctx.restore();
+}
 
 export interface PaintDabOptions {
   x: number;
@@ -20,7 +55,9 @@ export interface PaintDabOptions {
   brushSettings: BrushSettings;
   maskCanvas: HTMLCanvasElement | null;
   textureCanvas: HTMLCanvasElement | null;
+  waterTextureCanvas: HTMLCanvasElement | null;
   elevationCanvas: HTMLCanvasElement | null;
+  heightField?: NumericHeightField | null;
   customBiomes: BiomeTexture[];
   onRequestRedraw?: () => void;
 }
@@ -47,7 +84,9 @@ export function paintBrushDab({
   brushSettings,
   maskCanvas,
   textureCanvas,
+  waterTextureCanvas,
   elevationCanvas,
+  heightField,
   customBiomes,
   onRequestRedraw,
 }: PaintDabOptions): void {
@@ -69,7 +108,7 @@ export function paintBrushDab({
     if (isCarve) {
       mCtx.globalCompositeOperation = 'destination-out';
       if (roughness > 0.05) {
-        drawFractalDab(mCtx, x, y, size, roughness, '#ffffff', density);
+        drawSoftMaskDab(mCtx, x, y, size, roughness, density, softness, isCarve);
       } else {
         mCtx.globalAlpha = density;
         mCtx.beginPath();
@@ -79,7 +118,7 @@ export function paintBrushDab({
     } else {
       mCtx.globalCompositeOperation = 'source-over';
       if (roughness > 0.05) {
-        drawFractalDab(mCtx, x, y, size, roughness, '#ffffff', density);
+        drawSoftMaskDab(mCtx, x, y, size, roughness, density, softness, isCarve);
       } else {
         mCtx.fillStyle = '#ffffff';
         mCtx.globalAlpha = density;
@@ -104,8 +143,11 @@ export function paintBrushDab({
       }
     }
   } else if (activeTool === 'brush') {
-    if (!textureCanvas) return;
-    const tCtx = textureCanvas.getContext('2d');
+    const waterBiomeIds = new Set(['shallow_shallows', 'deep_ocean', 'river_water']);
+    const isWaterBiome = waterBiomeIds.has(selectedBiome || '');
+    const targetTextureCanvas = isWaterBiome ? waterTextureCanvas : textureCanvas;
+    if (!targetTextureCanvas) return;
+    const tCtx = targetTextureCanvas.getContext('2d');
     if (!tCtx) return;
 
     const allBiomes = [...DEFAULT_BIOMES, ...customBiomes];
@@ -186,7 +228,7 @@ export function paintBrushDab({
     }
 
     // Dual-tone color jitter for organic vegetation shifts
-    let finalColor = biome.color;
+    let finalColor = brushSettings.brushColorOverride || biome.color;
     if (
       (finalColor === '#6b7280' || finalColor === '#6B7280') &&
       (/grass|green|meadow|lawn|pasture|field|forest/i.test(biome.name) || biome.detailType === 'grass')
@@ -227,6 +269,12 @@ export function paintBrushDab({
     tCtx.fill();
     tCtx.restore();
   } else if (activeTool === 'elevation') {
+    if (heightField) {
+      const mode = brushSettings.elevationMode ?? 'raise';
+      const direction = mode === 'lower' ? -1 : mode === 'smooth' ? 0 : 1;
+      const amount = mode === 'plateau' ? Math.abs(elevation) : direction * Math.max(0.25, Math.abs(elevation)) * density;
+      if (direction !== 0 || mode === 'smooth') paintHeight(heightField, x, y, size, amount, maskCanvas || undefined, mode);
+    }
     if (!elevationCanvas) return;
     const eCtx = elevationCanvas.getContext('2d');
     if (!eCtx) return;
