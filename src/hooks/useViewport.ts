@@ -5,6 +5,8 @@ interface UseViewportProps {
   dimensions: CanvasDimensions;
   mainCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   viewportRef?: React.RefObject<HTMLDivElement | null>;
+  mapStageRef?: React.RefObject<HTMLDivElement | null>;
+  onModifierWheel?: (e: WheelEvent) => boolean;
 }
 
 interface ViewportState {
@@ -12,12 +14,21 @@ interface ViewportState {
   pan: { x: number; y: number };
 }
 
-export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewportProps) {
+export function useViewport({
+  dimensions,
+  mainCanvasRef,
+  viewportRef,
+  mapStageRef,
+  onModifierWheel,
+}: UseViewportProps) {
   // Unified viewport state for atomic zoom & pan synchronization
   const [viewport, setViewport] = useState<ViewportState>({
-    zoom: 1.0,
-    pan: { x: 40, y: 30 },
+    zoom: 0.75,
+    pan: { x: 32, y: 24 },
   });
+  const viewportStateRef = useRef<ViewportState>(viewport);
+  viewportStateRef.current = viewport;
+
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
@@ -25,6 +36,15 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
 
   const zoom = viewport.zoom;
   const pan = viewport.pan;
+
+  const syncStageTransform = useCallback(
+    (nextPan: { x: number; y: number }, nextZoom: number) => {
+      if (mapStageRef?.current) {
+        mapStageRef.current.style.transform = `translate3d(${nextPan.x}px, ${nextPan.y}px, 0px) scale(${nextZoom})`;
+      }
+    },
+    [mapStageRef]
+  );
 
   // Spacebar panning detection
   useEffect(() => {
@@ -88,33 +108,38 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
    * Fit the map to comfortably fill the screen with balanced padding
    */
   const fitToScreen = useCallback(
-    (containerWidth?: number, containerHeight?: number) => {
+    (containerWidth?: number, containerHeight?: number, customDims?: CanvasDimensions) => {
+      const targetDims = customDims || dimensions;
       const viewportEl = viewportRef?.current;
       const w = containerWidth || (viewportEl ? viewportEl.clientWidth : 0);
       const h = containerHeight || (viewportEl ? viewportEl.clientHeight : 0);
       if (!w || !h) {
-        setViewport({
-          zoom: 0.85,
-          pan: { x: 30, y: 30 },
-        });
+        const fallback = {
+          zoom: 0.65,
+          pan: { x: 24, y: 24 },
+        };
+        syncStageTransform(fallback.pan, fallback.zoom);
+        setViewport(fallback);
         return;
       }
-      const padX = 20;
-      const padY = 20;
-      const scaleX = (w - padX * 2) / dimensions.width;
-      const scaleY = (h - padY * 2) / dimensions.height;
-      const bestScale = Math.min(scaleX, scaleY, 1.25);
-      const clampedScale = Math.max(0.4, +bestScale.toFixed(2));
+      const padX = 24;
+      const padY = 24;
+      const scaleX = (w - padX * 2) / targetDims.width;
+      const scaleY = (h - padY * 2) / targetDims.height;
+      const bestScale = Math.min(scaleX, scaleY, 1.35);
+      const clampedScale = Math.max(0.15, +bestScale.toFixed(3));
 
-      const panX = Math.round((w - dimensions.width * clampedScale) / 2);
-      const panY = Math.round((h - dimensions.height * clampedScale) / 2);
+      const panX = Math.round((w - targetDims.width * clampedScale) / 2);
+      const panY = Math.round((h - targetDims.height * clampedScale) / 2);
 
-      setViewport({
+      const nextState = {
         zoom: clampedScale,
         pan: { x: panX, y: panY },
-      });
+      };
+      syncStageTransform(nextState.pan, nextState.zoom);
+      setViewport(nextState);
     },
-    [dimensions.width, dimensions.height, viewportRef]
+    [dimensions, viewportRef, syncStageTransform]
   );
 
   // Auto-fit to screen on initial mount once viewport size is known
@@ -147,12 +172,9 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
         const viewW = viewportEl ? viewportEl.clientWidth : 1400;
         const viewH = viewportEl ? viewportEl.clientHeight : 900;
 
-        // Keep the map useful while zooming out: the minimum is the scale
-        // that fits the full map with roughly 20px of breathing room.
-        // Going smaller only turns the editable map into a tiny thumbnail.
         const fitScale = Math.min((viewW - 40) / dimensions.width, (viewH - 40) / dimensions.height);
-        const minAllowedZoom = Math.max(0.1, +fitScale.toFixed(2));
-        const maxAllowedZoom = 4.0;
+        const minAllowedZoom = Math.max(0.08, +(fitScale * 0.65).toFixed(3));
+        const maxAllowedZoom = 6.0;
 
         const rawTarget =
           typeof targetZoomOrFn === 'function' ? targetZoomOrFn(currentZoom) : targetZoomOrFn;
@@ -174,7 +196,6 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
           const mouseX = focalClientPoint.clientX - rect.left;
           const mouseY = focalClientPoint.clientY - rect.top;
 
-          // Check if cursor is over the drawable map canvas
           const isOverMap =
             mouseX >= currentPan.x &&
             mouseX <= currentPan.x + curMapW &&
@@ -182,26 +203,20 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
             mouseY <= currentPan.y + curMapH;
 
           if (isOverMap) {
-            // Anchor to cursor position on the map
             focalX = mouseX;
             focalY = mouseY;
           } else {
-            // Cursor is outside the map in the empty background!
-            // Zoom symmetrically relative to the map canvas center so it doesn't wander
             focalX = currentPan.x + curMapW / 2;
             focalY = currentPan.y + curMapH / 2;
           }
         } else {
-          // Centered zoom (e.g. from toolbar button)
           focalX = viewW / 2;
           focalY = viewH / 2;
         }
 
-        // Standard affine focal zoom formula
         let nextPanX = focalX - (focalX - currentPan.x) * zoomRatio;
         let nextPanY = focalY - (focalY - currentPan.y) * zoomRatio;
 
-        // Auto-center when the map is smaller than the viewport
         if (newMapW <= viewW) {
           nextPanX = Math.round((viewW - newMapW) / 2);
         }
@@ -209,28 +224,31 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
           nextPanY = Math.round((viewH - newMapH) / 2);
         }
 
+        const nextPan = {
+          x: +nextPanX.toFixed(1),
+          y: +nextPanY.toFixed(1),
+        };
+        syncStageTransform(nextPan, newZoom);
+
         return {
           zoom: newZoom,
-          pan: {
-            x: +nextPanX.toFixed(1),
-            y: +nextPanY.toFixed(1),
-          },
+          pan: nextPan,
         };
       });
     },
-    [dimensions.width, dimensions.height, viewportRef]
+    [dimensions.width, dimensions.height, viewportRef, syncStageTransform]
   );
 
   const zoomIn = useCallback(
     (focalClientPoint?: { clientX: number; clientY: number }) => {
-      zoomTo((z) => Math.min(4.0, +(z * 1.25).toFixed(2)), focalClientPoint);
+      zoomTo((z) => Math.min(6.0, +(z * 1.25).toFixed(2)), focalClientPoint);
     },
     [zoomTo]
   );
 
   const zoomOut = useCallback(
     (focalClientPoint?: { clientX: number; clientY: number }) => {
-      zoomTo((z) => Math.max(0.35, +(z / 1.25).toFixed(2)), focalClientPoint);
+      zoomTo((z) => Math.max(0.1, +(z / 1.25).toFixed(2)), focalClientPoint);
     },
     [zoomTo]
   );
@@ -238,8 +256,8 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
   const handleWheelZoom = useCallback(
     (e: WheelEvent | React.WheelEvent) => {
       let delta = e.deltaY;
-      if (e.deltaMode === 1) delta *= 30; // lines mode
-      if (e.deltaMode === 2) delta *= 300; // pages mode
+      if (e.deltaMode === 1) delta *= 30;
+      if (e.deltaMode === 2) delta *= 300;
 
       const isTrackpadPinch = e.ctrlKey;
       let zoomFactor: number;
@@ -247,7 +265,7 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
       if (isTrackpadPinch) {
         zoomFactor = Math.exp(-delta * 0.012);
       } else {
-        const clampedDelta = Math.sign(delta) * Math.min(Math.abs(delta) * 0.0018, 0.20);
+        const clampedDelta = Math.sign(delta) * Math.min(Math.abs(delta) * 0.0018, 0.22);
         zoomFactor = Math.exp(-clampedDelta);
       }
 
@@ -266,6 +284,10 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
 
     const onNativeWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (onModifierWheel && (e.altKey || e.shiftKey)) {
+        const handled = onModifierWheel(e);
+        if (handled) return;
+      }
       handleWheelZoom(e);
     };
 
@@ -273,7 +295,7 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
     return () => {
       el.removeEventListener('wheel', onNativeWheel);
     };
-  }, [viewportRef, handleWheelZoom]);
+  }, [viewportRef, handleWheelZoom, onModifierWheel]);
 
   const resetZoom = useCallback(() => {
     fitToScreen();
@@ -295,10 +317,11 @@ export function useViewport({ dimensions, mainCanvasRef, viewportRef }: UseViewp
       setViewport((prev) => {
         const nextPan =
           typeof newPanOrFn === 'function' ? newPanOrFn(prev.pan) : newPanOrFn;
+        syncStageTransform(nextPan, prev.zoom);
         return { ...prev, pan: nextPan };
       });
     },
-    []
+    [syncStageTransform]
   );
 
   return {

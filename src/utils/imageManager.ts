@@ -197,14 +197,18 @@ class ImageManager {
   }
 
   /**
-   * Downscale and optimize an image file to prevent UI freezes or memory exhaustion
+   * Downscale, auto-trim transparent borders, and optionally bake ground contact shadow for AI-extracted assets
    */
   public async optimizeAndProcessImage(
     file: File,
     name: string,
     category: StampCategory,
-    maxDimension: number = 1024
+    maxDimension: number = 1024,
+    options?: { autoTrim?: boolean; bakeGroundShadow?: boolean }
   ): Promise<StampAsset> {
+    const autoTrim = options?.autoTrim ?? true;
+    const bakeGroundShadow = options?.bakeGroundShadow ?? false;
+
     return new Promise((resolve, reject) => {
       // If it's an SVG, load raw text/data url directly without raster downscaling
       if (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
@@ -248,13 +252,12 @@ class ImageManager {
             }
           }
 
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, targetW);
-          canvas.height = Math.max(1, targetH);
-          const ctx = canvas.getContext('2d');
+          const scratchCanvas = document.createElement('canvas');
+          scratchCanvas.width = Math.max(1, targetW);
+          scratchCanvas.height = Math.max(1, targetH);
+          const scratchCtx = scratchCanvas.getContext('2d', { willReadFrequently: true });
 
-          if (!ctx) {
-            // Fallback to raw data url
+          if (!scratchCtx) {
             const asset: StampAsset = {
               id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
               name: name || file.name.replace(/\.[^/.]+$/, '').replace(/[_-]+/g, ' '),
@@ -268,12 +271,88 @@ class ImageManager {
             return;
           }
 
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          scratchCtx.imageSmoothingEnabled = true;
+          scratchCtx.imageSmoothingQuality = 'high';
+          scratchCtx.drawImage(img, 0, 0, scratchCanvas.width, scratchCanvas.height);
+
+          let cropX = 0;
+          let cropY = 0;
+          let cropW = scratchCanvas.width;
+          let cropH = scratchCanvas.height;
+
+          if (autoTrim) {
+            const imgData = scratchCtx.getImageData(0, 0, scratchCanvas.width, scratchCanvas.height);
+            const data = imgData.data;
+            let minX = scratchCanvas.width;
+            let minY = scratchCanvas.height;
+            let maxX = -1;
+            let maxY = -1;
+
+            for (let y = 0; y < scratchCanvas.height; y++) {
+              for (let x = 0; x < scratchCanvas.width; x++) {
+                const alpha = data[(y * scratchCanvas.width + x) * 4 + 3];
+                if (alpha > 12) {
+                  if (x < minX) minX = x;
+                  if (x > maxX) maxX = x;
+                  if (y < minY) minY = y;
+                  if (y > maxY) maxY = y;
+                }
+              }
+            }
+
+            if (maxX >= minX && maxY >= minY) {
+              const pad = 4;
+              cropX = Math.max(0, minX - pad);
+              cropY = Math.max(0, minY - pad);
+              cropW = Math.min(scratchCanvas.width - cropX, maxX - minX + 1 + pad * 2);
+              cropH = Math.min(scratchCanvas.height - cropY, maxY - minY + 1 + pad * 2);
+            }
+          }
+
+          const bottomPad = bakeGroundShadow ? Math.max(8, Math.round(cropH * 0.08)) : 0;
+          const finalCanvas = document.createElement('canvas');
+          finalCanvas.width = Math.max(1, cropW);
+          finalCanvas.height = Math.max(1, cropH + bottomPad);
+          const finalCtx = finalCanvas.getContext('2d');
+
+          if (finalCtx) {
+            finalCtx.imageSmoothingEnabled = true;
+            finalCtx.imageSmoothingQuality = 'high';
+
+            if (bakeGroundShadow) {
+              finalCtx.save();
+              const cx = finalCanvas.width / 2;
+              const cy = cropH - Math.max(2, Math.round(cropH * 0.03));
+              const rx = Math.max(8, cropW * 0.36);
+              const ry = Math.max(4, cropH * 0.09);
+              const grad = finalCtx.createRadialGradient(cx, cy, 1, cx, cy, rx);
+              grad.addColorStop(0, 'rgba(15, 23, 42, 0.42)');
+              grad.addColorStop(0.55, 'rgba(15, 23, 42, 0.20)');
+              grad.addColorStop(1, 'rgba(15, 23, 42, 0)');
+              finalCtx.fillStyle = grad;
+              finalCtx.translate(cx, cy);
+              finalCtx.scale(1, ry / rx);
+              finalCtx.beginPath();
+              finalCtx.arc(0, 0, rx, 0, Math.PI * 2);
+              finalCtx.fill();
+              finalCtx.restore();
+            }
+
+            finalCtx.drawImage(
+              scratchCanvas,
+              cropX,
+              cropY,
+              cropW,
+              cropH,
+              0,
+              0,
+              cropW,
+              cropH
+            );
+          }
 
           // Convert to crisp PNG data URL
-          const optimizedDataUrl = canvas.toDataURL('image/png', 0.92);
+          const optimizedDataUrl = (finalCtx ? finalCanvas : scratchCanvas).toDataURL('image/png', 0.92);
 
           const asset: StampAsset = {
             id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
@@ -307,9 +386,10 @@ class ImageManager {
   public async processUploadedAsset(
     file: File,
     name: string,
-    category: StampAsset['category']
+    category: StampAsset['category'],
+    options?: { autoTrim?: boolean; bakeGroundShadow?: boolean }
   ): Promise<StampAsset> {
-    return this.optimizeAndProcessImage(file, name, category, 1024);
+    return this.optimizeAndProcessImage(file, name, category, 1024, options);
   }
 
   /**
@@ -320,6 +400,8 @@ class ImageManager {
     options: {
       defaultCategory: StampCategory;
       autoDetectCategory?: boolean;
+      autoTrim?: boolean;
+      bakeGroundShadow?: boolean;
       onProgress?: (processed: number, total: number, currentName: string) => void;
       shouldCancel?: () => boolean;
     }
@@ -351,7 +433,10 @@ class ImageManager {
       }
 
       try {
-        const asset = await this.optimizeAndProcessImage(item.file, displayName, category, 1024);
+        const asset = await this.optimizeAndProcessImage(item.file, displayName, category, 1024, {
+          autoTrim: options.autoTrim ?? true,
+          bakeGroundShadow: options.bakeGroundShadow ?? false,
+        });
         assets.push(asset);
       } catch (err) {
         console.warn(`Skipping invalid image file: ${item.file.name}`, err);

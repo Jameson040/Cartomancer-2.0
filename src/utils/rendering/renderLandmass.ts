@@ -1,6 +1,26 @@
 /**
  * Renders landmass mask with concentric coastal ripples, auto-beaching, luminous shelves, and copperplate hatching.
+ * Uses a persistent offscreen scratch canvas to avoid per-frame allocations on large 2K/4K maps.
  */
+
+let landScratchCanvas: HTMLCanvasElement | null = null;
+let landScratchCtx: CanvasRenderingContext2D | null = null;
+
+function getLandScratchCanvas(width: number, height: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  if (!landScratchCanvas) {
+    landScratchCanvas = document.createElement('canvas');
+    landScratchCtx = landScratchCanvas.getContext('2d');
+  }
+  if (landScratchCanvas.width !== width || landScratchCanvas.height !== height) {
+    landScratchCanvas.width = width;
+    landScratchCanvas.height = height;
+  }
+  if (!landScratchCtx) return null;
+  landScratchCtx.globalCompositeOperation = 'source-over';
+  landScratchCtx.clearRect(0, 0, width, height);
+  return { canvas: landScratchCanvas, ctx: landScratchCtx };
+}
+
 export function renderLandmassWithCoastlines(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -73,12 +93,10 @@ export function renderLandmassWithCoastlines(
     ctx.restore();
   }
 
-  // Step B: Solid land base fill
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = width;
-  tempCanvas.height = height;
-  const tCtx = tempCanvas.getContext('2d');
-  if (tCtx) {
+  // Step B: Solid land base fill (reusing persistent scratch canvas)
+  const scratch = getLandScratchCanvas(width, height);
+  if (scratch) {
+    const { canvas: tempCanvas, ctx: tCtx } = scratch;
     tCtx.drawImage(maskCanvas, 0, 0, width, height);
     tCtx.globalCompositeOperation = 'source-in';
     tCtx.fillStyle = '#e8d8b5'; // Natural parchment / limestone base

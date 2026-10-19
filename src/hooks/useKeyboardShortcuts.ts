@@ -122,6 +122,9 @@ export function useKeyboardShortcuts({
         case 'p':
           setActiveTool('path');
           break;
+        case 'r':
+          setActiveTool('territory');
+          break;
         case 't':
           setActiveTool('text');
           break;

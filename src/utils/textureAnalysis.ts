@@ -179,7 +179,10 @@ export function analyzeTextureImage(
   let suggestedElevation = 20;
 
   const lowerName = fallbackName.toLowerCase();
-  if (/grass|meadow|lawn|pasture|field|green|forest|wood|flora/i.test(lowerName)) {
+  if (/water|sea|ocean|lake|river|bay|lagoon|pond|deep|wave/i.test(lowerName)) {
+    suggestedDetailType = 'water';
+    suggestedElevation = -15;
+  } else if (/grass|meadow|lawn|pasture|field|green|forest|wood|flora/i.test(lowerName)) {
     suggestedDetailType = 'grass';
     suggestedElevation = 20;
   } else if (/sand|desert|dune|beach/i.test(lowerName)) {

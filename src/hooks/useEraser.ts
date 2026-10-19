@@ -1,22 +1,27 @@
 import React, { useRef, useCallback } from 'react';
-import { PlacedStamp, PlacedPath, PlacedText, BrushSettings } from '../types';
+import { PlacedStamp, PlacedPath, PlacedText, PlacedTerritory, BrushSettings } from '../types';
 import { isPointNearPath } from '../utils/geometry';
 import { isPointInStamp, isPointInLabel, getStampsFrontToBack } from '../utils/hitTesting';
+import { isPointInTerritory } from '../utils/rendering/renderTerritories';
 
 interface UseEraserProps {
   brushSettings: BrushSettings;
   stampsRef: React.MutableRefObject<PlacedStamp[]>;
   pathsRef: React.MutableRefObject<PlacedPath[]>;
   labelsRef: React.MutableRefObject<PlacedText[]>;
+  territoriesRef?: React.MutableRefObject<PlacedTerritory[]>;
   setStamps: (stamps: PlacedStamp[]) => void;
   setPaths: (paths: PlacedPath[]) => void;
   setLabels: (labels: PlacedText[]) => void;
+  setTerritories?: (territories: PlacedTerritory[]) => void;
   selectedStampId: string | null;
   selectedPathId: string | null;
   selectedLabelId: string | null;
+  selectedTerritoryId?: string | null;
   setSelectedStampId: (id: string | null) => void;
   setSelectedPathId: (id: string | null) => void;
   setSelectedLabelId: (id: string | null) => void;
+  setSelectedTerritoryId?: (id: string | null) => void;
   isStampsActive: () => boolean;
   isPathsActive: () => boolean;
   isLabelsActive: () => boolean;
@@ -29,15 +34,19 @@ export function useEraser({
   stampsRef,
   pathsRef,
   labelsRef,
+  territoriesRef,
   setStamps,
   setPaths,
   setLabels,
+  setTerritories,
   selectedStampId,
   selectedPathId,
   selectedLabelId,
+  selectedTerritoryId,
   setSelectedStampId,
   setSelectedPathId,
   setSelectedLabelId,
+  setSelectedTerritoryId,
   isStampsActive,
   isPathsActive,
   isLabelsActive,
@@ -46,11 +55,15 @@ export function useEraser({
 }: UseEraserProps) {
   const isErasingRef = useRef(false);
   const erasedElementsCountRef = useRef(0);
+  // Tracks stamps already evaluated during a single sweep stroke so probabilistic
+  // thinning (e.g. 30% density) evaluates each stamp once per stroke instead of every frame.
+  const testedStampIdsRef = useRef<Set<string>>(new Set());
 
   const eraseElementsAt = useCallback(
     (x: number, y: number) => {
-      const eraseRadius = Math.max(25, brushSettings.size * 0.5);
+      const eraseRadius = Math.max(20, brushSettings.size * 0.5);
       const targetMode = brushSettings.eraserTarget || 'all';
+      const thinningDensity = Math.max(0.05, Math.min(1.0, (brushSettings.stampEraserDensity ?? 100) / 100));
       let didErase = false;
 
       const stampsActive = isStampsActive();
@@ -69,10 +82,17 @@ export function useEraser({
         }
       }
 
-      // 2. Erase Stamps & Objects
+      // 2. Erase or Thin Out Stamps & Objects (respects locked state & thinning probability)
       if ((targetMode === 'all' || targetMode === 'stamps') && stampsActive) {
         const currentStamps = stampsRef.current;
-        const remainingStamps = currentStamps.filter((s) => !isPointInStamp(x, y, s, eraseRadius));
+        const remainingStamps = currentStamps.filter((s) => {
+          if (s.locked) return true;
+          if (!isPointInStamp(x, y, s, eraseRadius)) return true;
+          if (thinningDensity >= 0.99) return false;
+          if (testedStampIdsRef.current.has(s.id)) return true;
+          testedStampIdsRef.current.add(s.id);
+          return Math.random() >= thinningDensity;
+        });
         if (remainingStamps.length !== currentStamps.length) {
           didErase = true;
           erasedElementsCountRef.current += currentStamps.length - remainingStamps.length;
@@ -93,15 +113,46 @@ export function useEraser({
         }
       }
 
+      // 4. Erase Political Territories
+      if ((targetMode === 'all' || targetMode === 'territories') && territoriesRef && setTerritories) {
+        const currentTerritories = territoriesRef.current;
+        const remainingTerritories = currentTerritories.filter(
+          (t) => t.locked || !isPointInTerritory(x, y, t)
+        );
+        if (remainingTerritories.length !== currentTerritories.length) {
+          didErase = true;
+          erasedElementsCountRef.current += currentTerritories.length - remainingTerritories.length;
+          territoriesRef.current = remainingTerritories;
+          setTerritories(remainingTerritories);
+        }
+      }
+
       if (didErase) {
         requestRedraw();
       }
     },
-    [brushSettings.size, brushSettings.eraserTarget, isLabelsActive, isPathsActive, isStampsActive, labelsRef, pathsRef, requestRedraw, setLabels, setPaths, setStamps, stampsRef]
+    [
+      brushSettings.size,
+      brushSettings.eraserTarget,
+      brushSettings.stampEraserDensity,
+      isLabelsActive,
+      isPathsActive,
+      isStampsActive,
+      labelsRef,
+      pathsRef,
+      territoriesRef,
+      requestRedraw,
+      setLabels,
+      setPaths,
+      setStamps,
+      setTerritories,
+      stampsRef,
+    ]
   );
 
   const eraseSingleElementAtPoint = useCallback(
     (x: number, y: number): boolean => {
+      testedStampIdsRef.current.clear();
       const targetMode = brushSettings.eraserTarget || 'all';
       const stampsActive = isStampsActive();
       const labelsActive = isLabelsActive();
@@ -109,7 +160,9 @@ export function useEraser({
 
       // 1. Direct single-click deletion for stamps
       if ((targetMode === 'all' || targetMode === 'stamps') && stampsActive) {
-        const clickedStamp = getStampsFrontToBack(stampsRef.current).find((s) => isPointInStamp(x, y, s));
+        const clickedStamp = getStampsFrontToBack(stampsRef.current).find(
+          (s) => !s.locked && isPointInStamp(x, y, s)
+        );
         if (clickedStamp) {
           const remainingStamps = stampsRef.current.filter((s) => s.id !== clickedStamp.id);
           stampsRef.current = remainingStamps;
@@ -146,22 +199,61 @@ export function useEraser({
         }
       }
 
+      // 4. Direct single-click deletion for territories
+      if ((targetMode === 'all' || targetMode === 'territories') && territoriesRef && setTerritories) {
+        const clickedTerritory = [...territoriesRef.current]
+          .reverse()
+          .find((t) => !t.locked && isPointInTerritory(x, y, t));
+        if (clickedTerritory) {
+          const remainingTerritories = territoriesRef.current.filter((t) => t.id !== clickedTerritory.id);
+          territoriesRef.current = remainingTerritories;
+          setTerritories(remainingTerritories);
+          if (selectedTerritoryId === clickedTerritory.id) setSelectedTerritoryId?.(null);
+          pushHistorySnapshot('Erase Territory', { territories: remainingTerritories });
+          return true;
+        }
+      }
+
       return false;
     },
-    [brushSettings.eraserTarget, isLabelsActive, isPathsActive, isStampsActive, labelsRef, pathsRef, pushHistorySnapshot, selectedLabelId, selectedPathId, selectedStampId, setLabels, setPaths, setSelectedLabelId, setSelectedPathId, setSelectedStampId, setStamps, stampsRef]
+    [
+      brushSettings.eraserTarget,
+      isLabelsActive,
+      isPathsActive,
+      isStampsActive,
+      labelsRef,
+      pathsRef,
+      territoriesRef,
+      pushHistorySnapshot,
+      selectedLabelId,
+      selectedPathId,
+      selectedStampId,
+      selectedTerritoryId,
+      setLabels,
+      setPaths,
+      setSelectedLabelId,
+      setSelectedPathId,
+      setSelectedStampId,
+      setSelectedTerritoryId,
+      setStamps,
+      setTerritories,
+      stampsRef,
+    ]
   );
 
   const finishErasing = useCallback(() => {
     isErasingRef.current = false;
+    testedStampIdsRef.current.clear();
     if (erasedElementsCountRef.current > 0) {
       pushHistorySnapshot('Erase Elements', {
         stamps: stampsRef.current,
         paths: pathsRef.current,
         labels: labelsRef.current,
+        territories: territoriesRef?.current,
       });
       erasedElementsCountRef.current = 0;
     }
-  }, [labelsRef, pathsRef, pushHistorySnapshot, stampsRef]);
+  }, [labelsRef, pathsRef, territoriesRef, pushHistorySnapshot, stampsRef]);
 
   return {
     isErasingRef,

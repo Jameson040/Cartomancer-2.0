@@ -90,6 +90,8 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
   const [uploadName, setUploadName] = useState('');
   const [uploadCategory, setUploadCategory] = useState<StampCategory>('custom');
   const [autoDetectCategories, setAutoDetectCategories] = useState(true);
+  const [autoTrimBorders, setAutoTrimBorders] = useState(true);
+  const [bakeGroundShadow, setBakeGroundShadow] = useState(true);
   const [dragActive, setDragActive] = useState(false);
   const [uploadSuccessMsg, setUploadSuccessMsg] = useState('');
   const [showConfirmClear, setShowConfirmClear] = useState(false);
@@ -292,7 +294,8 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
           single.file,
           customSingleName,
           uploadCategory,
-          1024
+          1024,
+          { autoTrim: autoTrimBorders, bakeGroundShadow }
         );
         commitNewAssets([asset]);
         setUploadName('');
@@ -302,6 +305,8 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
         const processedAssets = await imageManager.processBatchAssets(items, {
           defaultCategory: uploadCategory,
           autoDetectCategory: autoDetectCategories,
+          autoTrim: autoTrimBorders,
+          bakeGroundShadow,
           shouldCancel: () => cancelBatchRef.current,
           onProgress: (current, total, currentFilename) => {
             setBatchProgress({ current, total, currentFilename });
@@ -672,6 +677,7 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-700">
                   <label className="flex items-center gap-2 cursor-pointer font-medium select-none">
                     <input
+                      id="chk-auto-detect-categories"
                       type="checkbox"
                       checked={autoDetectCategories}
                       onChange={(e) => setAutoDetectCategories(e.target.checked)}
@@ -703,6 +709,30 @@ export const AssetLibraryModal: React.FC<AssetLibraryModalProps> = ({
                       <option value="decorations">Compass & Banners</option>
                     </select>
                   </div>
+                </div>
+
+                {/* AI Pipeline Extraction Enhancements */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2.5 border-t border-[#E2D6B5]/60 text-xs text-slate-700">
+                  <label className="flex items-center gap-2 cursor-pointer font-medium select-none bg-[#FDF6E3]/70 px-2.5 py-2 rounded-lg border border-[#E2D6B5]">
+                    <input
+                      id="chk-auto-trim-borders"
+                      type="checkbox"
+                      checked={autoTrimBorders}
+                      onChange={(e) => setAutoTrimBorders(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                    <span>Auto-trim transparent borders (tight AI extract crop)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer font-medium select-none bg-[#FDF6E3]/70 px-2.5 py-2 rounded-lg border border-[#E2D6B5]">
+                    <input
+                      id="chk-bake-ground-shadow"
+                      type="checkbox"
+                      checked={bakeGroundShadow}
+                      onChange={(e) => setBakeGroundShadow(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                    <span>Bake contact ground-shadow on import</span>
+                  </label>
                 </div>
 
                 <div className="pt-2 border-t border-[#E2D6B5]/60 flex items-center justify-between text-xs">

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { HistoryStep, PlacedStamp, PlacedPath, PlacedText } from '../types';
+import { HistoryStep, PlacedStamp, PlacedPath, PlacedText, PlacedTerritory } from '../types';
+import { CanvasRenderer } from '../utils/canvasRenderer';
 
 export const MAX_HISTORY_STEPS = 25;
 
@@ -11,13 +12,16 @@ interface UseMapHistoryProps {
   stampsRef: React.MutableRefObject<PlacedStamp[]>;
   pathsRef: React.MutableRefObject<PlacedPath[]>;
   labelsRef: React.MutableRefObject<PlacedText[]>;
+  territoriesRef?: React.MutableRefObject<PlacedTerritory[]>;
   setStamps: (stamps: PlacedStamp[]) => void;
   setPaths: (paths: PlacedPath[]) => void;
   setLabels: (labels: PlacedText[]) => void;
+  setTerritories?: (territories: PlacedTerritory[]) => void;
   requestRedraw: (overrides?: {
     stamps?: PlacedStamp[];
     paths?: PlacedPath[];
     labels?: PlacedText[];
+    territories?: PlacedTerritory[];
   }) => void;
 }
 
@@ -29,9 +33,11 @@ export function useMapHistory({
   stampsRef,
   pathsRef,
   labelsRef,
+  territoriesRef,
   setStamps,
   setPaths,
   setLabels,
+  setTerritories,
   requestRedraw,
 }: UseMapHistoryProps) {
   const historyStackRef = useRef<HistoryStep[]>([]);
@@ -46,6 +52,7 @@ export function useMapHistory({
         stamps?: PlacedStamp[];
         paths?: PlacedPath[];
         labels?: PlacedText[];
+        territories?: PlacedTerritory[];
       }
     ) => {
       const mask = maskCanvasRef.current;
@@ -63,6 +70,7 @@ export function useMapHistory({
       const targetStamps = overrides?.stamps ?? stampsRef.current;
       const targetPaths = overrides?.paths ?? pathsRef.current;
       const targetLabels = overrides?.labels ?? labelsRef.current;
+      const targetTerritories = overrides?.territories ?? territoriesRef?.current ?? [];
 
       const step: HistoryStep = {
         description,
@@ -74,6 +82,7 @@ export function useMapHistory({
         stamps: targetStamps.map((s) => ({ ...s })),
         paths: targetPaths.map((p) => ({ ...p, points: [...p.points] })),
         labels: targetLabels.map((l) => ({ ...l })),
+        territories: targetTerritories.map((t) => ({ ...t, points: [...t.points] })),
       };
 
       const newHistory = [...historyStackRef.current, step];
@@ -85,7 +94,7 @@ export function useMapHistory({
       setUndoCount(Math.max(0, newHistory.length - 1));
       setRedoCount(0);
     },
-    [elevationCanvasRef, labelsRef, maskCanvasRef, pathsRef, stampsRef, textureCanvasRef, waterTextureCanvasRef]
+    [elevationCanvasRef, labelsRef, maskCanvasRef, pathsRef, stampsRef, territoriesRef, textureCanvasRef, waterTextureCanvasRef]
   );
 
   const restoreStep = useCallback(
@@ -94,14 +103,17 @@ export function useMapHistory({
       const restoredStamps = step.stamps.map((s) => ({ ...s }));
       const restoredPaths = step.paths.map((p) => ({ ...p, points: [...p.points] }));
       const restoredLabels = step.labels.map((l) => ({ ...l }));
+      const restoredTerritories = (step.territories || []).map((t) => ({ ...t, points: [...t.points] }));
 
       stampsRef.current = restoredStamps;
       pathsRef.current = restoredPaths;
       labelsRef.current = restoredLabels;
+      if (territoriesRef) territoriesRef.current = restoredTerritories;
 
       setStamps(restoredStamps);
       setPaths(restoredPaths);
       setLabels(restoredLabels);
+      setTerritories?.(restoredTerritories);
 
       const mask = maskCanvasRef.current;
       const texture = textureCanvasRef.current;
@@ -123,7 +135,8 @@ export function useMapHistory({
         const eCtx = elevation.getContext('2d')!;
         eCtx.putImageData(step.elevationImageData, 0, 0);
 
-        requestRedraw({ stamps: restoredStamps, paths: restoredPaths, labels: restoredLabels });
+        CanvasRenderer.invalidateTerrainCache('all');
+        requestRedraw({ stamps: restoredStamps, paths: restoredPaths, labels: restoredLabels, territories: restoredTerritories });
         return;
       }
 
@@ -132,7 +145,8 @@ export function useMapHistory({
       const checkDone = () => {
         pending--;
         if (pending <= 0) {
-          requestRedraw({ stamps: restoredStamps, paths: restoredPaths, labels: restoredLabels });
+          CanvasRenderer.invalidateTerrainCache('all');
+          requestRedraw({ stamps: restoredStamps, paths: restoredPaths, labels: restoredLabels, territories: restoredTerritories });
         }
       };
 

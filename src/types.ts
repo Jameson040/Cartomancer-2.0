@@ -6,15 +6,26 @@ export type ToolType =
   | 'select'
   | 'mask'       // Landmass sculptor (Add Land / Carve Sea)
   | 'brush'      // Biome texture painting
-  | 'fill'       // Contiguous land/water region fill
   | 'elevation'  // Height / relief contour sculpting
   | 'stamp'      // Asset placement & scatter brush
   | 'path'       // Rivers, roads, borders
+  | 'territory'  // Political territories & region polygons
   | 'text'       // Map labels & annotations
   | 'grid'       // Grid customization
   | 'eraser';    // Erase stamps/paths/labels
 
 export type MaskMode = 'add_land' | 'carve_water';
+
+export type LandmassShape =
+  | 'brush'      // Freehand organic sculpting
+  | 'circle'     // Round atoll, caldera, circular island or sea
+  | 'rectangle'  // Exact rectangular island, canal, harbor, or sea
+  | 'triangle'   // Triangular landmass or delta water
+  | 'pentagon'   // 5-sided regular polygon
+  | 'hexagon'    // 6-sided regular polygon (hex island, basalt causeway, lake)
+  | 'octagon'    // 8-sided regular polygon
+  | 'star'       // 5-point star fantasy landmass or lake
+  | 'polygon';   // Custom multi-vertex freeform polygon
 
 export type StampCategory = 
   | 'mountains'
@@ -44,6 +55,17 @@ export interface StampAsset {
   isCustom?: boolean;
 }
 
+export type StampBlendMode = 'source-over' | 'multiply' | 'overlay' | 'soft-light' | 'screen';
+
+export interface StampShadowConfig {
+  enabled: boolean;
+  blur: number;
+  offsetX: number;
+  offsetY: number;
+  opacity: number;
+  groundOcclusion?: boolean | number;
+}
+
 export interface PlacedStamp {
   id: string;
   assetId: string;
@@ -55,8 +77,30 @@ export interface PlacedStamp {
   flipY?: boolean;      // Vertical flip
   opacity: number;
   tint?: string;        // Optional tint hex color
+  hue?: number;         // -180 to 180 deg
+  saturation?: number;  // 0 to 200 % (default 100)
+  brightness?: number;  // 0 to 200 % (default 100)
+  contrast?: number;    // 0 to 200 % (default 100)
+  blendMode?: StampBlendMode;
+  shadow?: StampShadowConfig;
+  locked?: boolean;
+  groupId?: string;
   layer: number;        // Z-ordering: -5 to +5, with sub-sort by Y
   createdAt: number;
+}
+
+export interface PlacedTerritory {
+  id: string;
+  name: string;
+  points: { x: number; y: number }[];
+  fillColor: string;
+  fillOpacity: number;
+  borderColor: string;
+  borderWidth: number;
+  innerGlowWidth: number;
+  borderStyle: 'solid' | 'dashed' | 'double';
+  showLabel?: boolean;
+  locked?: boolean;
 }
 
 export interface PathPoint {
@@ -149,6 +193,12 @@ export interface GridConfig {
   labels: boolean;
   showRhumbLines?: boolean;    // Nautical 16/32-point compass ray lines
   showCoordinates?: boolean;   // Alphanumeric margin borders (A-Z, 1-50)
+  showCompassRose?: boolean;   // Engraved 8-point compass rose overlay
+  compassCorner?: 'top-right' | 'bottom-left' | 'bottom-right';
+  showScaleBar?: boolean;      // Cartographic distance scale bar
+  scaleBarDistance?: number;   // Total distance shown on scale bar (e.g. 200)
+  scaleBarUnit?: 'miles' | 'leagues' | 'km';
+  showMapBorder?: boolean;     // Classic atlas double-frame border around map
 }
 
 export type TimeOfDay = 'day' | 'golden_hour' | 'sunset' | 'twilight' | 'night' | 'torchlight' | 'overcast';
@@ -202,6 +252,9 @@ export interface BrushSettings {
   maskMode: MaskMode;
   mode?: 'add' | 'subtract' | 'land' | 'ocean' | 'erase_land' | string;
   selectedBiome: string;  // BiomeTexture id
+  textureTargetDomain?: 'auto' | 'land' | 'water' | 'both'; // Target domain: auto (by texture), land only, sea/water only, or both
+  landmassShape?: LandmassShape; // 'brush' | 'circle' | 'rectangle' | 'triangle' | 'pentagon' | 'hexagon' | 'octagon' | 'star' | 'polygon'
+  landmassEdgeStyle?: 'crisp' | 'fractal'; // crisp geometric vs organic fractal coastline
   coastlineRipples: number; // 0 to 4 ripples
   coastlineColor: string;
   coastlineRoughness?: number; // 0 to 1 fractal coastline jitter
@@ -230,6 +283,7 @@ export interface BrushSettings {
   pathTextureId?: string;       // Chosen texture from Shader Lab & Biomes (default: 'default')
   // Stamp specific brush settings
   selectedStampId: string;
+  stampPoolIds?: string[]; // Multi-stamp pool for random variation on every stroke
   stampPlacementMode: 'single' | 'scatter' | 'ribbon';
   scatterDensity: number; // 1 to 10 assets per stroke burst
   scatterRadius: number;
@@ -247,11 +301,33 @@ export interface BrushSettings {
   autoYDepthSort: boolean;
   stampLayer: number;
   stampTint?: string;     // Seasonal/environmental tint hex (autumn, snow, etc)
-  eraserTarget?: 'all' | 'stamps' | 'paths' | 'labels';
+  stampHue?: number;      // -180 to 180
+  stampSaturation?: number; // 0 to 200 (default 100)
+  stampBrightness?: number; // 0 to 200 (default 100)
+  stampContrast?: number;   // 0 to 200 (default 100)
+  stampBlendMode?: StampBlendMode;
+  stampShadowEnabled?: boolean;
+  stampShadowBlur?: number;
+  stampShadowOffsetX?: number;
+  stampShadowOffsetY?: number;
+  stampShadowOpacity?: number;
+  stampGroundOcclusion?: boolean | number;
+  eraserTarget?: 'all' | 'stamps' | 'paths' | 'labels' | 'territories';
+  stampEraserDensity?: number; // 10 to 100% thinning density when sweeping stamps
   labelScale?: number;
   labelBoxColor?: string;
   labelBoxBorderColor?: string;
   labelBoxOpacity?: number;
+  // Territory / Region Polygon settings
+  territoryName?: string;
+  territoryFillColor?: string;
+  territoryFillOpacity?: number;
+  territoryBorderColor?: string;
+  territoryBorderWidth?: number;
+  territoryInnerGlowWidth?: number;
+  territoryInnerGlowOpacity?: number;
+  territoryBorderStyle?: 'solid' | 'dashed' | 'double';
+  territoryShowLabel?: boolean;
 }
 
 export interface CanvasDimensions {
@@ -282,6 +358,7 @@ export interface MapProject {
   stamps: PlacedStamp[];
   paths: PlacedPath[];
   labels: PlacedText[];
+  territories?: PlacedTerritory[];
   customAssets: StampAsset[];
   elevationConfig?: WorldElevationConfig;
   referenceMap?: ReferenceMapConfig;
@@ -301,6 +378,7 @@ export interface RenderContextOptions {
   stamps: PlacedStamp[];
   paths: PlacedPath[];
   labels: PlacedText[];
+  territories?: PlacedTerritory[];
   customAssets?: StampAsset[];
   layers: {
     water: LayerState;
@@ -330,6 +408,7 @@ export interface RenderContextOptions {
   stampCategoryVisibility?: Record<string, boolean>;
   selectedLabelId?: string | null;
   selectedPathId?: string | null;
+  selectedTerritoryId?: string | null;
   customBiomes?: BiomeTexture[];
   activePathDraft?: {
     points: { x: number; y: number }[];
@@ -342,6 +421,18 @@ export interface RenderContextOptions {
     doubleLine?: boolean;
     dashPattern?: number[];
   } | null;
+  activeTerritoryDraft?: {
+    points: { x: number; y: number }[];
+    cursorPos?: { x: number; y: number };
+    name?: string;
+    fillColor: string;
+    fillOpacity?: number;
+    borderColor: string;
+    borderWidth?: number;
+    innerGlowWidth?: number;
+    borderStyle?: 'solid' | 'dashed' | 'double';
+  } | null;
+  cursorPos?: { x: number; y: number };
   referenceMap?: ReferenceMapConfig | null;
   importedMapLayer?: ImportedMapLayer | null;
   highResScale?: number;
@@ -363,6 +454,7 @@ export interface HistoryStep {
   stamps: PlacedStamp[];
   paths: PlacedPath[];
   labels: PlacedText[];
+  territories?: PlacedTerritory[];
 }
 
 

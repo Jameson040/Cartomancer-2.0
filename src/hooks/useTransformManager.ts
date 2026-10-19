@@ -88,7 +88,7 @@ export function useTransformManager({
           const activeStampIds = start.selectedStampIds ?? selectedStampIds;
           const selectedIds = activeStampIds.length > 0 ? new Set(activeStampIds) : new Set([selectedStampId]);
           const next = stampsRef.current.map((s) =>
-            selectedIds.has(s.id)
+            selectedIds.has(s.id) && !s.locked
               ? {
                   ...s,
                   x: Math.round((initialStampTransformsRef.current.get(s.id)?.x ?? s.x) + dx),
@@ -105,7 +105,7 @@ export function useTransformManager({
           const selectedIds = activeStampIds.length > 1 ? new Set(activeStampIds) : new Set([selectedStampId]);
           const next = stampsRef.current.map((s) => {
             const initial = initialStampTransformsRef.current.get(s.id);
-            if (!initial || !selectedIds.has(s.id)) return s;
+            if (!initial || !selectedIds.has(s.id) || s.locked) return s;
             return {
               ...s,
               x: selectedIds.size > 1 ? Math.round(start.centerX + (initial.x - start.centerX) * ratio) : s.x,
@@ -122,7 +122,7 @@ export function useTransformManager({
           const selectedIds = activeStampIds.length > 1 ? new Set(activeStampIds) : new Set([selectedStampId]);
           const next = stampsRef.current.map((s) => {
             const initial = initialStampTransformsRef.current.get(s.id);
-            if (!initial || !selectedIds.has(s.id)) return s;
+            if (!initial || !selectedIds.has(s.id) || s.locked) return s;
             const radians = (deltaAngle * Math.PI) / 180;
             const relX = initial.x - start.centerX;
             const relY = initial.y - start.centerY;

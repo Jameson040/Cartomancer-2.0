@@ -323,6 +323,9 @@ export class BiomePatternManager {
   }
 }
 
+let biomeScratchCanvas: HTMLCanvasElement | null = null;
+let biomeScratchCtx: CanvasRenderingContext2D | null = null;
+
 export function renderTexturesMasked(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -331,14 +334,22 @@ export function renderTexturesMasked(
   textureCanvas: HTMLCanvasElement
 ): void {
   ctx.save();
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = width;
-  tempCanvas.height = height;
-  const tCtx = tempCanvas.getContext('2d');
+  if (!biomeScratchCanvas) {
+    biomeScratchCanvas = document.createElement('canvas');
+    biomeScratchCtx = biomeScratchCanvas.getContext('2d');
+  }
+  if (biomeScratchCanvas.width !== width || biomeScratchCanvas.height !== height) {
+    biomeScratchCanvas.width = width;
+    biomeScratchCanvas.height = height;
+  }
+  const tCtx = biomeScratchCtx;
   if (!tCtx) {
     ctx.restore();
     return;
   }
+
+  tCtx.globalCompositeOperation = 'source-over';
+  tCtx.clearRect(0, 0, width, height);
 
   // Draw mask first
   tCtx.drawImage(maskCanvas, 0, 0, width, height);
@@ -347,6 +358,6 @@ export function renderTexturesMasked(
   tCtx.drawImage(textureCanvas, 0, 0, width, height);
 
   // Composite painted textures onto main canvas
-  ctx.drawImage(tempCanvas, 0, 0, width, height);
+  ctx.drawImage(biomeScratchCanvas, 0, 0, width, height);
   ctx.restore();
 }

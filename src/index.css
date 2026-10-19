@@ -1,19 +1,100 @@
 @import "tailwindcss";
 
-/* Custom Parchment Scrollbars */
-.scrollbar-parchment::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+/* Merak-Inspired Dark Cartographer's Studio Scrollbars & Theme */
+.scrollbar-parchment::-webkit-scrollbar,
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
-.scrollbar-parchment::-webkit-scrollbar-track {
-  background: rgba(226, 214, 181, 0.4);
-  border-radius: 8px;
+
+.scrollbar-parchment::-webkit-scrollbar-track,
+::-webkit-scrollbar-track {
+  background: rgba(15, 22, 35, 0.65);
+  border-radius: 6px;
 }
-.scrollbar-parchment::-webkit-scrollbar-thumb {
-  background: rgba(180, 140, 90, 0.5);
-  border-radius: 8px;
-  border: 1.5px solid rgba(250, 246, 236, 0.8);
+
+.scrollbar-parchment::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.65);
+  border-radius: 6px;
 }
-.scrollbar-parchment::-webkit-scrollbar-thumb:hover {
-  background: rgba(140, 100, 60, 0.75);
+
+.scrollbar-parchment::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.75);
+}
+
+/* Studio Canvas Blueprint Drafting Table Backdrop */
+.studio-viewport-grid {
+  background-color: #070b12;
+  background-image:
+    radial-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 1px),
+    radial-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px, 8px 8px;
+  background-position: 0 0, 0 0;
+}
+
+/* Scoped Dark Studio Overhaul for Left Tool Settings Panel */
+#tool-settings-panel {
+  background-color: #0f1623 !important;
+  border-color: #1e293b !important;
+  color: #e2e8f0 !important;
+}
+
+#tool-settings-panel > div:first-child {
+  background-color: #141d2e !important;
+  border-color: #1e293b !important;
+}
+
+#tool-settings-panel h2,
+#tool-settings-panel h3,
+#tool-settings-panel h4,
+#tool-settings-panel .text-slate-900,
+#tool-settings-panel .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+
+#tool-settings-panel .text-slate-700,
+#tool-settings-panel .text-slate-600 {
+  color: #94a3b8 !important;
+}
+
+#tool-settings-panel .text-slate-500,
+#tool-settings-panel .text-slate-400 {
+  color: #64748b !important;
+}
+
+#tool-settings-panel .bg-white,
+#tool-settings-panel .bg-white\/90,
+#tool-settings-panel .bg-white\/80,
+#tool-settings-panel .bg-white\/70,
+#tool-settings-panel .bg-\[\#FDF6E3\],
+#tool-settings-panel .bg-\[\#FAF6EC\],
+#tool-settings-panel .bg-\[\#FAF3E0\],
+#tool-settings-panel .bg-\[\#F4EBD0\],
+#tool-settings-panel .bg-\[\#F4EBD0\]\/60,
+#tool-settings-panel .bg-\[\#F4EBD0\]\/50,
+#tool-settings-panel .bg-\[\#F4EBD0\]\/40 {
+  background-color: #162032 !important;
+  color: #e2e8f0 !important;
+}
+
+#tool-settings-panel .border-\[\#E2D6B5\],
+#tool-settings-panel .border-\[\#E2D6B5\]\/60,
+#tool-settings-panel .border-\[\#E2D6B5\]\/70,
+#tool-settings-panel .border-\[\#D5C69E\] {
+  border-color: #263449 !important;
+}
+
+#tool-settings-panel input[type="text"],
+#tool-settings-panel input[type="number"],
+#tool-settings-panel select,
+#tool-settings-panel textarea {
+  background-color: #0b101b !important;
+  border-color: #263449 !important;
+  color: #f8fafc !important;
+}
+
+#tool-settings-panel input[type="range"] {
+  background-color: #263449 !important;
 }

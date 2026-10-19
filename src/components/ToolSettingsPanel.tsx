@@ -9,7 +9,6 @@ import {
   MousePointer,
   MountainSnow,
   Paintbrush,
-  PaintBucket,
   TrendingUp,
   TreePine,
   Spline,
@@ -31,6 +30,27 @@ import {
   Sparkles,
   Layers,
   CheckCircle,
+  Pipette,
+  Circle,
+  Square,
+  Triangle,
+  Hexagon,
+  Octagon,
+  Pentagon,
+  Star,
+  Waves,
+  Undo2,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  SlidersHorizontal,
+  Palette,
+  Shield,
+  Lock,
+  Unlock,
+  Group,
+  Ungroup,
 } from 'lucide-react';
 import {
   ToolType,
@@ -38,10 +58,15 @@ import {
   PlacedStamp,
   PlacedText,
   PlacedPath,
+  PlacedTerritory,
   StampAsset,
+  StampBlendMode,
   BiomePreset,
   PathStyle,
   BiomeTexture,
+  LandmassShape,
+  GridConfig,
+  GridType,
 } from '../types';
 import { DEFAULT_BIOMES, DEFAULT_STAMP_ASSETS } from '../data/defaultAssets';
 
@@ -120,6 +145,37 @@ interface ToolSettingsPanelProps {
   customBiomes?: BiomeTexture[];
   onOpenShaderLab?: () => void;
   onSampleMapColor?: () => void;
+  isEyedropperActive?: boolean;
+  selectedStampIds?: string[];
+  onClearStampSelection?: () => void;
+  // Landmass shape & polygon options
+  polygonVerticesCount?: number;
+  onCommitPolygon?: () => void;
+  onUndoPolygonPoint?: () => void;
+  onCancelPolygon?: () => void;
+  onStampPresetShape?: (shape: LandmassShape) => void;
+  // Custom uploaded assets & Multi-Stamp Pool / Style Clipboard / Territory props
+  customAssets?: StampAsset[];
+  selectedTerritory?: PlacedTerritory | null;
+  onUpdateSelectedTerritory?: (updates: Partial<PlacedTerritory>) => void;
+  onDeleteSelectedTerritory?: () => void;
+  onDuplicateSelectedTerritory?: () => void;
+  territoryVerticesCount?: number;
+  onCommitTerritory?: () => void;
+  onUndoTerritoryPoint?: () => void;
+  onCancelTerritory?: () => void;
+  onToggleLockStamp?: () => void;
+  onGroupStamps?: () => void;
+  onUngroupStamps?: () => void;
+  onCopyStampStyle?: () => void;
+  onPasteStampStyle?: () => void;
+  hasStyleClipboard?: boolean;
+  // Grid & Cartography Overlay options
+  gridConfig?: GridConfig;
+  onUpdateGridConfig?: (updates: Partial<GridConfig>) => void;
+  topographicalView?: boolean;
+  onToggleTopographicalView?: () => void;
+  onFillOrClearLandmass?: (fillLand: boolean) => void;
 }
 
 const BIOMES: { id: BiomePreset; label: string; color: string; desc: string; defaultElevation: number }[] = [
@@ -160,7 +216,7 @@ const FONT_OPTIONS = [
   { value: 'serif', label: 'Classic Serif' },
 ];
 
-export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
+export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = React.memo(({
   activeTool,
   onClose,
   brushSettings,
@@ -229,7 +285,49 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
   customBiomes = [],
   onOpenShaderLab,
   onSampleMapColor,
+  isEyedropperActive = false,
+  selectedStampIds = [],
+  onClearStampSelection,
+  polygonVerticesCount = 0,
+  onCommitPolygon,
+  onUndoPolygonPoint,
+  onCancelPolygon,
+  onStampPresetShape,
+  customAssets = [],
+  selectedTerritory = null,
+  onUpdateSelectedTerritory,
+  onDeleteSelectedTerritory,
+  onDuplicateSelectedTerritory,
+  territoryVerticesCount = 0,
+  onCommitTerritory,
+  onUndoTerritoryPoint,
+  onCancelTerritory,
+  onToggleLockStamp,
+  onGroupStamps,
+  onUngroupStamps,
+  onCopyStampStyle,
+  onPasteStampStyle,
+  hasStyleClipboard = false,
+  gridConfig,
+  onUpdateGridConfig,
+  topographicalView = false,
+  onToggleTopographicalView,
+  onFillOrClearLandmass,
 }) => {
+  const [biomeViewMode, setBiomeViewMode] = React.useState<'minimal' | 'full'>('minimal');
+  const [biomeSubTab, setBiomeSubTab] = React.useState<'pro' | 'colors'>('pro');
+  const [biomeSearch, setBiomeSearch] = React.useState('');
+  const [openSections, setOpenSections] = React.useState<Record<string, boolean>>({
+    stampGrading: true,
+    stampShadow: false,
+    stampDepth: false,
+    brushGrading: false,
+    brushShadow: false,
+  });
+
+  const toggleSection = (key: string) =>
+    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+
   // Tool meta title & icon
   const getToolMeta = () => {
     switch (activeTool) {
@@ -239,18 +337,18 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
         return { title: 'Landmass Sculptor', icon: MountainSnow, subtitle: 'Add continents or carve oceans' };
       case 'brush':
         return { title: 'Biome Textures', icon: Paintbrush, subtitle: 'Paint natural terrain biomes' };
-      case 'fill':
-        return { title: 'Region Fill', icon: PaintBucket, subtitle: 'Fill one connected land or water region' };
       case 'elevation':
         return { title: 'Elevation Sculptor', icon: TrendingUp, subtitle: 'Contour heights & mountain ridges' };
       case 'stamp':
         return { title: 'Stamp Placement', icon: TreePine, subtitle: 'Place mountains, castles & trees' };
       case 'path':
         return { title: 'Paths & Rivers Pen', icon: Spline, subtitle: 'Vector waterways & road paths' };
+      case 'territory':
+        return { title: 'Political Territory', icon: Shield, subtitle: 'Kingdom borders & region glow' };
       case 'text':
         return { title: 'Map Labeling', icon: Type, subtitle: 'Cartographic typography & ribbons' };
       case 'eraser':
-        return { title: 'Feature Eraser', icon: Eraser, subtitle: 'Click to delete or sweep brush' };
+        return { title: 'Eraser & Thinning', icon: Eraser, subtitle: 'Delete or thin out map features' };
       case 'grid':
         return { title: 'Tactical Grid Overlay', icon: GridIcon, subtitle: 'Cartographic scale & grids' };
       default:
@@ -300,9 +398,26 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 <div className="flex items-center justify-between border-b border-[#E2D6B5]/70 pb-2">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-                    <span className="font-bold text-slate-800 text-[12px]">Selected Asset</span>
+                    <span className="font-bold text-slate-800 text-[12px]">
+                      {selectedStampIds.length > 1
+                        ? `Multi-Selection (${selectedStampIds.length} Assets)`
+                        : 'Selected Asset'}
+                    </span>
                   </div>
-                  <span className="font-mono text-[10px] text-slate-500">ID: {selectedStamp.id.slice(0, 6)}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] text-slate-500">
+                      {selectedStampIds.length > 1 ? 'Batch Transform' : `ID: ${selectedStamp.id.slice(0, 6)}`}
+                    </span>
+                    {selectedStampIds.length > 1 && onClearStampSelection && (
+                      <button
+                        onClick={onClearStampSelection}
+                        className="text-[10px] text-amber-800 font-semibold hover:underline cursor-pointer"
+                        title="Deselect all stamps"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Scale Slider & Custom Numeric Input */}
@@ -465,8 +580,230 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   />
                 </div>
 
+                {/* Collapsible: Visual Blending & Color Grading (HSBC + Blend Mode) */}
+                <div className="flex flex-col border-t border-[#E2D6B5]/60 pt-1.5">
+                  <button
+                    id="btn-toggle-stamp-grading"
+                    type="button"
+                    onClick={() => toggleSection('stampGrading')}
+                    className="flex items-center justify-between py-1 text-[11px] font-bold text-slate-800 hover:text-amber-800 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Palette className="w-3.5 h-3.5 text-amber-700" />
+                      Visual Blending & Color Grading
+                    </span>
+                    {openSections.stampGrading ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                  {openSections.stampGrading && (
+                    <div className="flex flex-col gap-2 pt-1.5 pb-1 pl-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-semibold text-slate-600">Blend Mode</span>
+                        <select
+                          id="sel-selected-stamp-blend"
+                          value={selectedStamp.blendMode || 'source-over'}
+                          onChange={(e) => onUpdateSelectedStamp({ blendMode: e.target.value as StampBlendMode })}
+                          className="px-2 py-1 bg-white border border-[#E2D6B5] rounded text-[10px] font-semibold text-slate-800 cursor-pointer"
+                        >
+                          <option value="source-over">Normal</option>
+                          <option value="multiply">Multiply (Ink Blend)</option>
+                          <option value="overlay">Overlay (Terrain Contrast)</option>
+                          <option value="soft-light">Soft Light (Atmospheric)</option>
+                          <option value="screen">Screen (Highlight)</option>
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-600">Hue Shift</span>
+                          <span className="font-mono font-bold text-amber-800">{selectedStamp.hue ?? 0}°</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="-180"
+                          max="180"
+                          step="5"
+                          value={selectedStamp.hue ?? 0}
+                          onChange={(e) => onUpdateSelectedStamp({ hue: Number(e.target.value) })}
+                          className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-600">Saturation</span>
+                          <span className="font-mono font-bold text-amber-800">{selectedStamp.saturation ?? 100}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="200"
+                          step="5"
+                          value={selectedStamp.saturation ?? 100}
+                          onChange={(e) => onUpdateSelectedStamp({ saturation: Number(e.target.value) })}
+                          className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex justify-between text-[10px]">
+                            <span className="text-slate-600">Brightness</span>
+                            <span className="font-mono font-bold text-amber-800">{selectedStamp.brightness ?? 100}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="25"
+                            max="175"
+                            step="5"
+                            value={selectedStamp.brightness ?? 100}
+                            onChange={(e) => onUpdateSelectedStamp({ brightness: Number(e.target.value) })}
+                            className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex justify-between text-[10px]">
+                            <span className="text-slate-600">Contrast</span>
+                            <span className="font-mono font-bold text-amber-800">{selectedStamp.contrast ?? 100}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="25"
+                            max="175"
+                            step="5"
+                            value={selectedStamp.contrast ?? 100}
+                            onChange={(e) => onUpdateSelectedStamp({ contrast: Number(e.target.value) })}
+                            className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateSelectedStamp({
+                            hue: 0,
+                            saturation: 100,
+                            brightness: 100,
+                            contrast: 100,
+                            blendMode: 'source-over',
+                          })
+                        }
+                        className="self-end text-[10px] text-amber-700 hover:underline cursor-pointer font-semibold"
+                      >
+                        Reset Grading
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Collapsible: Dynamic Drop Shadow & Ambient Ground Occlusion */}
+                <div className="flex flex-col border-t border-[#E2D6B5]/60 pt-1.5">
+                  <button
+                    id="btn-toggle-stamp-shadow"
+                    type="button"
+                    onClick={() => toggleSection('stampShadow')}
+                    className="flex items-center justify-between py-1 text-[11px] font-bold text-slate-800 hover:text-amber-800 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                      Shadow & Ground Occlusion
+                    </span>
+                    {openSections.stampShadow ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                  {openSections.stampShadow && (
+                    <div className="flex flex-col gap-2 pt-1.5 pb-1 pl-1">
+                      <label className="flex items-center justify-between text-[11px] cursor-pointer">
+                        <span className="font-medium text-slate-700">Enable Drop Shadow</span>
+                        <input
+                          type="checkbox"
+                          checked={selectedStamp.shadow?.enabled ?? false}
+                          onChange={(e) =>
+                            onUpdateSelectedStamp({
+                              shadow: {
+                                enabled: e.target.checked,
+                                blur: selectedStamp.shadow?.blur ?? 8,
+                                offsetX: selectedStamp.shadow?.offsetX ?? 4,
+                                offsetY: selectedStamp.shadow?.offsetY ?? 6,
+                                opacity: selectedStamp.shadow?.opacity ?? 0.45,
+                                groundOcclusion: selectedStamp.shadow?.groundOcclusion ?? 0.35,
+                              },
+                            })
+                          }
+                          className="accent-amber-700 rounded cursor-pointer"
+                        />
+                      </label>
+
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-600">Ambient Ground Occlusion</span>
+                          <span className="font-mono font-bold text-amber-800">
+                            {Math.round(Number(selectedStamp.shadow?.groundOcclusion || 0) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={Number(selectedStamp.shadow?.groundOcclusion || 0)}
+                          onChange={(e) =>
+                            onUpdateSelectedStamp({
+                              shadow: {
+                                enabled: selectedStamp.shadow?.enabled ?? true,
+                                blur: selectedStamp.shadow?.blur ?? 8,
+                                offsetX: selectedStamp.shadow?.offsetX ?? 4,
+                                offsetY: selectedStamp.shadow?.offsetY ?? 6,
+                                opacity: selectedStamp.shadow?.opacity ?? 0.45,
+                                groundOcclusion: Number(e.target.value),
+                              },
+                            })
+                          }
+                          className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                        />
+                      </div>
+
+                      {selectedStamp.shadow?.enabled && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] text-slate-600">Shadow Blur ({selectedStamp.shadow.blur}px)</span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="24"
+                              step="1"
+                              value={selectedStamp.shadow.blur}
+                              onChange={(e) =>
+                                onUpdateSelectedStamp({
+                                  shadow: { ...selectedStamp.shadow!, blur: Number(e.target.value) },
+                                })
+                              }
+                              className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] text-slate-600">Shadow Opacity ({Math.round(selectedStamp.shadow.opacity * 100)}%)</span>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="0.95"
+                              step="0.05"
+                              value={selectedStamp.shadow.opacity}
+                              onChange={(e) =>
+                                onUpdateSelectedStamp({
+                                  shadow: { ...selectedStamp.shadow!, opacity: Number(e.target.value) },
+                                })
+                              }
+                              className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Z-Axis Depth Coordinate & Layer Ordering */}
-                <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
+                <div className="flex flex-col gap-2 pt-1.5 border-t border-[#E2D6B5]/60">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-slate-700 text-[11px]">Z-Axis Depth Coordinate</span>
                     <div className="flex items-center gap-1.5">
@@ -494,49 +831,69 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                       onClick={onBringStampToFront}
                       className="py-1 px-2 rounded bg-[#F4EBD0] hover:bg-[#EFE5C9] font-medium border border-[#E2D6B5] text-[10px] flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Layers className="w-3 h-3 text-amber-700" /> Bring to Front (Max Z)
+                      <Layers className="w-3 h-3 text-amber-700" /> Bring to Front
                     </button>
                     <button
                       onClick={onSendStampToBack}
                       className="py-1 px-2 rounded bg-[#F4EBD0] hover:bg-[#EFE5C9] font-medium border border-[#E2D6B5] text-[10px] flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Layers className="w-3 h-3 text-slate-500" /> Send to Back (Min Z)
+                      <Layers className="w-3 h-3 text-slate-500" /> Send to Back
                     </button>
                   </div>
+                </div>
 
-                  <div className="flex items-center justify-between bg-[#F4EBD0]/50 p-1.5 rounded-lg border border-[#E2D6B5]/70">
-                    <span className="text-[10px] text-slate-500 font-medium">Nudge (10px):</span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => onUpdateSelectedStamp({ x: selectedStamp.x - 10 })}
-                        className="p-1 rounded bg-white hover:bg-amber-50 border border-[#E2D6B5] text-slate-700 cursor-pointer"
-                        title="Nudge Left"
-                      >
-                        <ArrowLeft className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => onUpdateSelectedStamp({ y: selectedStamp.y - 10 })}
-                        className="p-1 rounded bg-white hover:bg-amber-50 border border-[#E2D6B5] text-slate-700 cursor-pointer"
-                        title="Nudge Up"
-                      >
-                        <ArrowUp className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => onUpdateSelectedStamp({ y: selectedStamp.y + 10 })}
-                        className="p-1 rounded bg-white hover:bg-amber-50 border border-[#E2D6B5] text-slate-700 cursor-pointer"
-                        title="Nudge Down"
-                      >
-                        <ArrowDown className="w-3 h-3" />
-                      </button>
-                      <button
-                        onClick={() => onUpdateSelectedStamp({ x: selectedStamp.x + 10 })}
-                        className="p-1 rounded bg-white hover:bg-amber-50 border border-[#E2D6B5] text-slate-700 cursor-pointer"
-                        title="Nudge Right"
-                      >
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
+                {/* Quick Object Actions: Lock, Group, Style Copy/Paste */}
+                <div className="grid grid-cols-2 gap-1.5 pt-1.5 border-t border-[#E2D6B5]/60">
+                  {onToggleLockStamp && (
+                    <button
+                      id="btn-inspector-lock-stamp"
+                      onClick={onToggleLockStamp}
+                      className={`py-1 px-2 rounded border text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer ${
+                        selectedStamp.locked
+                          ? 'bg-amber-100 text-amber-900 border-amber-400'
+                          : 'bg-[#F4EBD0] hover:bg-[#EFE5C9] text-slate-800 border-[#E2D6B5]'
+                      }`}
+                    >
+                      {selectedStamp.locked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                      {selectedStamp.locked ? 'Unlock' : 'Lock Position'}
+                    </button>
+                  )}
+                  {selectedStampIds.length > 1 && onGroupStamps && (
+                    <button
+                      id="btn-inspector-group-stamps"
+                      onClick={onGroupStamps}
+                      className="py-1 px-2 rounded bg-[#F4EBD0] hover:bg-[#EFE5C9] border border-[#E2D6B5] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer text-slate-800"
+                    >
+                      <Group className="w-3 h-3 text-amber-700" /> Group ({selectedStampIds.length})
+                    </button>
+                  )}
+                  {selectedStamp.groupId && onUngroupStamps && (
+                    <button
+                      id="btn-inspector-ungroup-stamps"
+                      onClick={onUngroupStamps}
+                      className="py-1 px-2 rounded bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer text-amber-900"
+                    >
+                      <Ungroup className="w-3 h-3" /> Ungroup
+                    </button>
+                  )}
+                  {onCopyStampStyle && (
+                    <button
+                      id="btn-inspector-copy-style"
+                      onClick={onCopyStampStyle}
+                      className="py-1 px-2 rounded bg-[#F4EBD0] hover:bg-[#EFE5C9] border border-[#E2D6B5] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer text-slate-800"
+                    >
+                      Copy Style
+                    </button>
+                  )}
+                  {hasStyleClipboard && onPasteStampStyle && (
+                    <button
+                      id="btn-inspector-paste-style"
+                      onClick={onPasteStampStyle}
+                      className="py-1 px-2 rounded bg-amber-100 hover:bg-amber-200 border border-amber-400 text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer text-amber-900"
+                    >
+                      Paste Style
+                    </button>
+                  )}
                 </div>
 
                 {/* Duplicate & Delete Actions */}
@@ -832,6 +1189,98 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   <Trash2 className="w-3.5 h-3.5" /> Delete Path
                 </button>
               </div>
+            ) : selectedTerritory ? (
+              <div className="flex flex-col gap-3 bg-white/70 p-3 rounded-xl border border-[#E2D6B5]">
+                <div className="flex items-center justify-between border-b border-[#E2D6B5]/70 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-amber-700" />
+                    <span className="font-bold text-slate-800 text-[12px]">Selected Territory</span>
+                  </div>
+                  <span className="font-mono text-[10px] text-slate-500">{selectedTerritory.points.length} vertices</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="font-semibold text-slate-700 text-[11px]">Kingdom / Region Name</span>
+                  <input
+                    type="text"
+                    value={selectedTerritory.name || ''}
+                    onChange={(e) => onUpdateSelectedTerritory?.({ name: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-white border border-[#E2D6B5] rounded-md text-xs font-semibold"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-semibold text-slate-600">Fill Color</span>
+                    <input
+                      type="color"
+                      value={selectedTerritory.fillColor}
+                      onChange={(e) => onUpdateSelectedTerritory?.({ fillColor: e.target.value })}
+                      className="w-full h-7 rounded cursor-pointer border border-[#E2D6B5]"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-semibold text-slate-600">Border Color</span>
+                    <input
+                      type="color"
+                      value={selectedTerritory.borderColor}
+                      onChange={(e) => onUpdateSelectedTerritory?.({ borderColor: e.target.value })}
+                      className="w-full h-7 rounded cursor-pointer border border-[#E2D6B5]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-600 font-semibold">Fill Opacity</span>
+                    <span className="font-mono font-bold text-amber-800">{Math.round(selectedTerritory.fillOpacity * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.02"
+                    max="0.75"
+                    step="0.02"
+                    value={selectedTerritory.fillOpacity}
+                    onChange={(e) => onUpdateSelectedTerritory?.({ fillOpacity: Number(e.target.value) })}
+                    className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-slate-600 font-semibold">Inner Border Glow</span>
+                    <span className="font-mono font-bold text-amber-800">{selectedTerritory.innerGlowWidth}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="60"
+                    step="2"
+                    value={selectedTerritory.innerGlowWidth}
+                    onChange={(e) => onUpdateSelectedTerritory?.({ innerGlowWidth: Number(e.target.value) })}
+                    className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2 border-t border-[#E2D6B5]/70">
+                  {onDuplicateSelectedTerritory && (
+                    <button
+                      onClick={onDuplicateSelectedTerritory}
+                      className="flex-1 py-1.5 rounded-lg bg-[#F4EBD0] hover:bg-[#EFE5C9] font-medium border border-[#E2D6B5] text-[11px] flex items-center justify-center gap-1.5 cursor-pointer text-slate-800"
+                    >
+                      <Copy className="w-3.5 h-3.5" /> Duplicate
+                    </button>
+                  )}
+                  {onDeleteSelectedTerritory && (
+                    <button
+                      onClick={onDeleteSelectedTerritory}
+                      className="px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 font-medium border border-red-200 text-[11px] flex items-center justify-center gap-1.5 cursor-pointer text-red-700"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className="flex flex-col gap-3 bg-white/60 p-4 rounded-xl border border-dashed border-[#E2D6B5] text-center">
                 <div className="w-10 h-10 rounded-full bg-amber-100/80 text-amber-800 mx-auto flex items-center justify-center">
@@ -852,7 +1301,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
         )}
 
         {/* ============================================================== */}
-        {/* 2. LANDMASS SCULPTOR TOOL */}
+        {/* 2. LANDMASS SCULPTOR */}
         {/* ============================================================== */}
         {activeTool === 'mask' && (
           <div className="flex flex-col gap-3.5">
@@ -864,7 +1313,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   onClick={() => onUpdateBrushSettings({ maskMode: 'add_land', mode: 'add' })}
                   className={`py-2 rounded-lg font-semibold border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     brushSettings.maskMode === 'add_land' || brushSettings.mode === 'add'
-                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs ring-1 ring-amber-400/50'
                       : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
                   }`}
                 >
@@ -875,14 +1324,164 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   onClick={() => onUpdateBrushSettings({ maskMode: 'carve_water', mode: 'subtract' })}
                   className={`py-2 rounded-lg font-semibold border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     brushSettings.maskMode === 'carve_water' || brushSettings.mode === 'subtract'
-                      ? 'bg-[#1e3a8a] text-blue-200 border-[#172554] shadow-xs'
+                      ? 'bg-[#1e3a8a] text-blue-200 border-[#172554] shadow-xs ring-1 ring-blue-400/50'
                       : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
                   }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-blue-400" /> Carve Ocean
+                  <Waves className="w-3.5 h-3.5 text-blue-300" /> Carve Sea / Lake
                 </button>
               </div>
             </div>
+
+            {/* Streamlined Cartography Sculpting Shapes (No redundant pentagons/stars) */}
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-800 text-[11px]">Sculpting Tool</span>
+                <span className="text-[10px] font-mono font-bold text-amber-800 uppercase px-1.5 py-0.5 bg-amber-100 rounded border border-amber-300">
+                  {brushSettings.landmassShape || 'brush'}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[
+                  { id: 'brush', label: 'Brush', icon: MountainSnow, title: 'Organic freehand coastline brush' },
+                  { id: 'polygon', label: 'Lasso', icon: Spline, title: 'Multi-point freeform continent or bay lasso' },
+                  { id: 'circle', label: 'Atoll', icon: Circle, title: 'Circular island, caldera, or crater lake' },
+                  { id: 'rectangle', label: 'Block', icon: Square, title: 'Rectangular landmass block, canal, or strait' },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  const isSelected = (brushSettings.landmassShape || 'brush') === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      id={`landmass-shape-${item.id}`}
+                      type="button"
+                      onClick={() => onUpdateBrushSettings({ landmassShape: item.id as LandmassShape })}
+                      className={`py-2 px-1 rounded-lg border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1 ${
+                        isSelected
+                          ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs ring-2 ring-amber-400/60 font-bold'
+                          : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3] hover:border-amber-300'
+                      }`}
+                      title={item.title}
+                    >
+                      <Icon className={`w-4 h-4 ${isSelected ? 'text-amber-300' : 'text-slate-600'}`} />
+                      <span className="text-[10px] leading-none">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Edge Style: Only shown when using non-brush shapes */}
+            {brushSettings.landmassShape && brushSettings.landmassShape !== 'brush' && (
+              <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+                <span className="font-semibold text-slate-800 text-[11px]">Shape Coastline Edge</span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    id="landmass-edge-fractal"
+                    type="button"
+                    onClick={() => onUpdateBrushSettings({ landmassEdgeStyle: 'fractal' })}
+                    className={`py-1.5 px-2 rounded-lg font-semibold border text-[11px] text-center transition-all cursor-pointer ${
+                      brushSettings.landmassEdgeStyle === 'fractal'
+                        ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
+                        : 'bg-white text-slate-700 border-[#E2D6B5]'
+                    }`}
+                  >
+                    Natural Fractal Coast
+                  </button>
+                  <button
+                    id="landmass-edge-crisp"
+                    type="button"
+                    onClick={() => onUpdateBrushSettings({ landmassEdgeStyle: 'crisp' })}
+                    className={`py-1.5 px-2 rounded-lg font-semibold border text-[11px] text-center transition-all cursor-pointer ${
+                      (brushSettings.landmassEdgeStyle || 'crisp') === 'crisp'
+                        ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
+                        : 'bg-white text-slate-700 border-[#E2D6B5]'
+                    }`}
+                  >
+                    Crisp Geometric
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Custom Polygon Controls */}
+            {brushSettings.landmassShape === 'polygon' && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50/80 p-3 flex flex-col gap-2.5 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                    <Spline className="w-3.5 h-3.5 text-amber-700" />
+                    Custom Polygon Drafting
+                  </span>
+                  <span className="font-mono text-[10px] bg-white px-2 py-0.5 rounded-full border border-amber-200 font-bold text-amber-900">
+                    {polygonVerticesCount} {polygonVerticesCount === 1 ? 'vertex' : 'vertices'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Click anywhere on the map canvas to place vertices. Click near the starting point or double-click to close and sculpt.
+                </p>
+                <div className="flex gap-1.5">
+                  <button
+                    id="btn-commit-polygon"
+                    type="button"
+                    disabled={polygonVerticesCount < 3}
+                    onClick={onCommitPolygon}
+                    className="flex-1 py-1.5 rounded-lg bg-[#3E2723] hover:bg-[#2D1B18] disabled:opacity-40 disabled:pointer-events-none text-amber-200 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    title="Commit polygon to landmass or water"
+                  >
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    {brushSettings.maskMode === 'carve_water' ? 'Carve Water' : 'Sculpt Land'}
+                  </button>
+                  <button
+                    id="btn-undo-polygon-point"
+                    type="button"
+                    disabled={polygonVerticesCount === 0}
+                    onClick={onUndoPolygonPoint}
+                    className="p-1.5 rounded-lg bg-white hover:bg-amber-100 disabled:opacity-40 disabled:pointer-events-none text-slate-700 border border-[#E2D6B5] cursor-pointer"
+                    title="Undo last vertex"
+                  >
+                    <Undo2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    id="btn-cancel-polygon"
+                    type="button"
+                    disabled={polygonVerticesCount === 0}
+                    onClick={onCancelPolygon}
+                    className="px-2 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 disabled:opacity-40 disabled:pointer-events-none text-red-700 border border-red-200 font-semibold text-xs cursor-pointer"
+                    title="Cancel polygon"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Preset Geometric Shape Quick Controls */}
+            {brushSettings.landmassShape &&
+              brushSettings.landmassShape !== 'brush' &&
+              brushSettings.landmassShape !== 'polygon' && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-2.5 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-800 text-[11px] capitalize">
+                      {brushSettings.landmassShape} Tool
+                    </span>
+                    <span className="text-[10px] text-sky-800 font-medium">Click & Drag to Size</span>
+                  </div>
+                  <p className="text-[10px] text-slate-600 leading-normal">
+                    Drag on the map to size and rotate, or click once to place at radius {brushSettings.size}px.
+                  </p>
+                  {onStampPresetShape && (
+                    <button
+                      id="btn-stamp-shape-center"
+                      type="button"
+                      onClick={() => onStampPresetShape(brushSettings.landmassShape!)}
+                      className="w-full py-1.5 px-2 rounded-lg bg-white hover:bg-sky-100 border border-sky-300 font-semibold text-sky-900 text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-sky-600" />
+                      Place at Map Center ({brushSettings.size}px)
+                    </button>
+                  )}
+                </div>
+              )}
 
             {/* Water and coastline palette */}
             <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
@@ -903,23 +1502,25 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </label>
             </div>
 
-            {/* Brush Size */}
+            {/* Brush / Shape Size */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
-                <span className="font-semibold text-slate-700">Brush Radius</span>
+                <span className="font-semibold text-slate-700">
+                  {brushSettings.landmassShape && brushSettings.landmassShape !== 'brush' ? 'Default Shape Radius' : 'Brush Radius'}
+                </span>
                 <span className="font-mono font-bold text-amber-700">{brushSettings.size}px</span>
               </div>
               <input
                 type="range"
                 min="10"
-                max="250"
+                max="400"
                 step="5"
                 value={brushSettings.size}
                 onChange={(e) => onUpdateBrushSettings({ size: Number(e.target.value) })}
                 className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
               />
               <div className="flex gap-1.5 pt-0.5">
-                {[25, 60, 120, 200].map((sz) => (
+                {[30, 75, 150, 250].map((sz) => (
                   <button
                     key={sz}
                     onClick={() => onUpdateBrushSettings({ size: sz })}
@@ -954,7 +1555,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               />
             </div>
 
-            {/* Fractal Roughness & Noise Octaves */}
+            {/* Fractal Roughness */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
                 <span className="font-semibold text-slate-700">Coastline Fractal Roughness</span>
@@ -962,7 +1563,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </div>
               <input
                 type="range"
-                min="0.1"
+                min="0.0"
                 max="1.0"
                 step="0.05"
                 value={brushSettings.roughness ?? 0.6}
@@ -970,298 +1571,629 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
               />
             </div>
+
+            {/* Quick Canvas Flood Actions */}
+            {onFillOrClearLandmass && (
+              <div className="flex flex-col gap-1.5 pt-2 border-t border-[#E2D6B5]/50">
+                <span className="font-semibold text-slate-700 text-[11px]">Quick Canvas Fill</span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    id="btn-fill-all-land"
+                    type="button"
+                    onClick={() => onFillOrClearLandmass(true)}
+                    className="py-1.5 px-2 rounded-lg border border-[#E2D6B5] bg-white hover:bg-[#FDF6E3] text-[11px] font-semibold cursor-pointer flex items-center justify-center gap-1.5"
+                    title="Fill entire canvas with land so you can carve inland seas and rivers"
+                  >
+                    <MountainSnow className="w-3.5 h-3.5 text-amber-500" />
+                    Fill All Land
+                  </button>
+                  <button
+                    id="btn-clear-all-ocean"
+                    type="button"
+                    onClick={() => onFillOrClearLandmass(false)}
+                    className="py-1.5 px-2 rounded-lg border border-[#E2D6B5] bg-white hover:bg-[#FDF6E3] text-[11px] font-semibold cursor-pointer flex items-center justify-center gap-1.5"
+                    title="Reset landmass mask to open ocean"
+                  >
+                    <Waves className="w-3.5 h-3.5 text-sky-400" />
+                    Reset to Ocean
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* ============================================================== */}
         {/* 3. BIOME TEXTURE BRUSH */}
         {/* ============================================================== */}
-        {activeTool === 'brush' && (
-          <div className="flex flex-col gap-3.5">
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Brush Presets</span>
-              <div className="grid grid-cols-2 gap-1.5">
-                {[
-                  { id: 'meadow', label: 'Soft Meadow', biome: 'lush_grass', size: 90, softness: 0.8, density: 0.45 },
-                  { id: 'forest', label: 'Dense Forest', biome: 'highland_forest', size: 65, softness: 0.55, density: 0.7 },
-                  { id: 'desert', label: 'Dry Desert', biome: 'golden_sand', size: 110, softness: 0.65, density: 0.5 },
-                  { id: 'mountain', label: 'Rocky Ground', biome: 'mountain_stone', size: 55, softness: 0.35, density: 0.75 },
-                ].map((preset) => (
-                  <button key={preset.id} onClick={() => onUpdateBrushSettings({ selectedBiome: preset.biome, size: preset.size, softness: preset.softness, density: preset.density, opacity: 0.8 })} className="rounded-lg border border-[#E2D6B5] bg-white px-2 py-1.5 text-[10px] font-semibold text-slate-700 hover:bg-[#FDF6E3]">
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-lg border border-violet-200 bg-violet-50 p-2.5 flex flex-col gap-2">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-violet-800">Texture Color</div>
-              <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-violet-900"><span>Target: {(['shallow_shallows', 'deep_ocean', 'river_water'].includes(brushSettings.selectedBiome) || customBiomes.some((biome) => biome.id === brushSettings.selectedBiome && biome.detailType === 'water')) ? 'WATER' : 'LAND'}</span><span className="rounded px-1.5 py-0.5 bg-white border border-violet-200">Layer constrained</span></div>
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded border border-black/20" style={{ backgroundColor: brushSettings.brushColorOverride || '#94a3b8' }} />
-                <span className="text-[10px] text-violet-900 flex-1">{brushSettings.brushColorOverride ? 'Sampled color active' : 'Using selected biome color'}</span>
-                {brushSettings.brushColorOverride && <button onClick={() => onUpdateBrushSettings({ brushColorOverride: undefined })} className="text-[10px] underline text-violet-800">Reset</button>}
-              </div>
-              {onSampleMapColor && <button onClick={onSampleMapColor} className="rounded border border-violet-300 bg-white px-2 py-1.5 text-[10px] font-semibold text-violet-900 hover:bg-violet-100">Sample color from map at cursor</button>}
-            </div>
+        {activeTool === 'brush' && (() => {
+          const allBiomesList = [...DEFAULT_BIOMES, ...customBiomes];
+          const currentSelectedId = (brushSettings.selectedBiome || activeBiome || 'lush_grass').trim();
+          const canonicalId = BIOME_ALIAS_TO_CANONICAL[currentSelectedId.toLowerCase()] || currentSelectedId;
+          const activeBiomeObj =
+            allBiomesList.find((b) => b.id === currentSelectedId) ||
+            allBiomesList.find((b) => b.id.toLowerCase() === canonicalId.toLowerCase()) ||
+            allBiomesList.find((b) => b.name.toLowerCase() === currentSelectedId.toLowerCase()) ||
+            DEFAULT_BIOMES[0];
 
-            {/* Direct Shader Lab & Custom Biome Maker trigger */}
-            {onOpenShaderLab && (
-              <button
-                type="button"
-                onClick={onOpenShaderLab}
-                className="w-full py-2 px-3 rounded-xl border border-dashed border-[#b45309] bg-amber-50 hover:bg-amber-100 text-[#78350f] font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-xs"
-              >
-                <Sparkles className="w-4 h-4 text-[#b45309]" />
-                <span>Open Shader Lab & Custom Biome Maker</span>
-              </button>
-            )}
+          const isWaterTexture =
+            ['shallow_shallows', 'deep_ocean', 'river_water'].includes(activeBiomeObj.id) ||
+            activeBiomeObj.detailType === 'water' ||
+            /water|sea|ocean|lake|river|bay|lagoon|waves|abyss/i.test(activeBiomeObj.name || activeBiomeObj.id);
 
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-slate-800 text-[11px]">Choose Biome Palette</span>
-              {customBiomes.length > 0 && (
-                <span className="text-[10px] text-amber-800 font-mono font-medium">
-                  {customBiomes.length} Custom
-                </span>
-              )}
-            </div>
+          const targetDomain = brushSettings.textureTargetDomain || 'auto';
+          const effectiveTarget =
+            targetDomain === 'water'
+              ? 'sea'
+              : targetDomain === 'land'
+              ? 'land'
+              : targetDomain === 'both'
+              ? 'both'
+              : isWaterTexture
+              ? 'sea'
+              : 'land';
 
-            {/* Custom Biomes from Shader Lab */}
-            {customBiomes.length > 0 && (
-              <div className="flex flex-col gap-1.5 pb-2 border-b border-[#E2D6B5]/60">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">Custom Biomes</span>
-                {customBiomes.map((b) => (
+          const quickBiomes = [
+            ...customBiomes.slice(0, 2),
+            ...DEFAULT_BIOMES.filter((b) => ['lush_grass', 'highland_forest', 'golden_sand', 'mountain_stone', 'shallow_shallows', 'deep_ocean'].includes(b.id)),
+          ].slice(0, 8);
+
+          const filteredCustomBiomes = customBiomes.filter(
+            (b) => !biomeSearch || b.name.toLowerCase().includes(biomeSearch.toLowerCase()) || (b.detailType || '').toLowerCase().includes(biomeSearch.toLowerCase())
+          );
+          const filteredWaterBiomes = BIOMES.filter(
+            (b) => ['shallow_shallows', 'deep_ocean', 'river_water'].includes(b.id) &&
+              (!biomeSearch || b.label.toLowerCase().includes(biomeSearch.toLowerCase()) || b.desc.toLowerCase().includes(biomeSearch.toLowerCase()))
+          );
+          const filteredLandBiomes = BIOMES.filter(
+            (b) => !['shallow_shallows', 'deep_ocean', 'river_water'].includes(b.id) &&
+              (!biomeSearch || b.label.toLowerCase().includes(biomeSearch.toLowerCase()) || b.desc.toLowerCase().includes(biomeSearch.toLowerCase()))
+          );
+
+          const flatColorPresets = [
+            { name: 'Meadow Green', color: '#4d8036' },
+            { name: 'Pine Forest', color: '#244524' },
+            { name: 'Desert Sand', color: '#d4a853' },
+            { name: 'Lagoon Turquoise', color: '#38bdf8' },
+            { name: 'Abyssal Blue', color: '#1a365d' },
+            { name: 'Mountain Slate', color: '#64748b' },
+            { name: 'Volcanic Ash', color: '#292524' },
+            { name: 'Red Badlands', color: '#b85d38' },
+            { name: 'Glacial Ice', color: '#e0f2fe' },
+            { name: 'Parchment Tan', color: '#e4d3a8' },
+          ];
+
+          return (
+            <div className="flex flex-col gap-3">
+              {/* Top Quick Actions: Shader Lab & Full/Minimal View toggle */}
+              <div className="flex items-center gap-1.5">
+                {onOpenShaderLab && (
                   <button
-                    key={b.id}
-                    onClick={() => {
-                      onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
-                      onSelectBiome(b.id as any);
-                    }}
-                    className={`p-2 rounded-xl border flex items-center gap-3 transition-all cursor-pointer text-left ${
-                      brushSettings.selectedBiome === b.id || activeBiome === b.id
-                        ? 'bg-white border-[#b45309] shadow-xs ring-1 ring-[#b45309]'
-                        : 'bg-white/60 border-[#E2D6B5] hover:bg-white'
-                    }`}
+                    id="btn-open-shader-lab"
+                    type="button"
+                    onClick={onOpenShaderLab}
+                    className="flex-1 py-1.5 px-2.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                    title="Shader Lab: sample colors, upload textures and build custom pattern shaders"
                   >
-                    {b.isPattern && b.patternImageUrl ? (
+                    <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Shader Lab</span>
+                  </button>
+                )}
+                <button
+                  id="btn-toggle-biome-mode"
+                  type="button"
+                  onClick={() => setBiomeViewMode((m) => (m === 'minimal' ? 'full' : 'minimal'))}
+                  className="py-1.5 px-2.5 rounded-lg border border-[#E2D6B5] bg-white hover:bg-[#FDF6E3] text-slate-700 font-semibold text-xs flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
+                  title={biomeViewMode === 'minimal' ? 'Switch to Full Mode to see all textures' : 'Switch to Minimal Mode'}
+                >
+                  <SlidersHorizontal className="w-3 h-3 text-slate-500" />
+                  <span>{biomeViewMode === 'minimal' ? 'Full Mode' : 'Minimal'}</span>
+                  {biomeViewMode === 'minimal' ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+                </button>
+              </div>
+
+              {/* CORE TOOL CONTROLS AT TOP (Never pushed to the bottom!) */}
+              <div className="rounded-xl border border-[#E2D6B5] bg-white/80 p-2.5 flex flex-col gap-2.5 shadow-2xs">
+                {/* 1. Brush Radius Slider */}
+                <div className="flex flex-col gap-1">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="font-semibold text-slate-700">Brush Radius</span>
+                    <span className="font-mono font-bold text-amber-700">{brushSettings.size}px</span>
+                  </div>
+                  <input
+                    id="biome-brush-radius"
+                    type="range"
+                    min="15"
+                    max="250"
+                    step="5"
+                    value={brushSettings.size}
+                    onChange={(e) => onUpdateBrushSettings({ size: Number(e.target.value) })}
+                    className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                  />
+                  <div className="flex gap-1 pt-0.5">
+                    {[25, 60, 120, 200].map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() => onUpdateBrushSettings({ size: sz })}
+                        className={`flex-1 py-0.5 rounded border text-[10px] font-medium transition-all cursor-pointer ${
+                          brushSettings.size === sz
+                            ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
+                            : 'bg-[#F4EBD0] text-slate-700 border-[#E2D6B5] hover:bg-[#EFE5C9]'
+                        }`}
+                      >
+                        {sz}px
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Texture Opacity Slider */}
+                <div className="flex flex-col gap-1 pt-1.5 border-t border-[#E2D6B5]/50">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="font-semibold text-slate-700">Texture Opacity</span>
+                    <span className="font-mono font-bold text-amber-700">{Math.round((brushSettings.opacity ?? 0.85) * 100)}%</span>
+                  </div>
+                  <input
+                    id="biome-texture-opacity"
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    value={brushSettings.opacity ?? 0.85}
+                    onChange={(e) => onUpdateBrushSettings({ opacity: Number(e.target.value) })}
+                    className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                  />
+                </div>
+
+                {/* 3. Paint Target (Land vs Sea vs Both) */}
+                <div className="flex flex-col gap-1.5 pt-1.5 border-t border-[#E2D6B5]/50">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-700 text-[11px]">Paint Target</span>
+                    <span
+                      className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full border ${
+                        effectiveTarget === 'sea'
+                          ? 'bg-blue-100 text-blue-800 border-blue-300'
+                          : effectiveTarget === 'both'
+                          ? 'bg-purple-100 text-purple-800 border-purple-300'
+                          : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      }`}
+                    >
+                      {effectiveTarget === 'sea' ? 'Targeting: Sea / Ocean' : effectiveTarget === 'both' ? 'Targeting: All (Land & Sea)' : 'Targeting: Landmass'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[
+                      { id: 'auto', label: 'Auto' },
+                      { id: 'land', label: 'Land' },
+                      { id: 'water', label: 'Sea' },
+                      { id: 'both', label: 'Both' },
+                    ].map((mode) => {
+                      const isActive = (brushSettings.textureTargetDomain || 'auto') === mode.id;
+                      return (
+                        <button
+                          key={mode.id}
+                          id={`target-domain-${mode.id}`}
+                          type="button"
+                          onClick={() => onUpdateBrushSettings({ textureTargetDomain: mode.id as any })}
+                          className={`py-1 rounded text-[10px] font-semibold transition-all cursor-pointer border ${
+                            isActive
+                              ? mode.id === 'water'
+                                ? 'bg-blue-600 text-white border-blue-700 shadow-2xs'
+                                : mode.id === 'both'
+                                ? 'bg-purple-700 text-white border-purple-800 shadow-2xs'
+                                : 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-2xs'
+                              : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-amber-50'
+                          }`}
+                          title={
+                            mode.id === 'auto'
+                              ? 'Automatically paint on sea if water texture, or land if land texture'
+                              : mode.id === 'water'
+                              ? 'Paint on Sea / Water only (allows imported sea textures to paint on ocean)'
+                              : mode.id === 'land'
+                              ? 'Paint on Land only'
+                              : 'Paint everywhere across both Land and Sea'
+                          }
+                        >
+                          {mode.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* SEPARATED TABS: Pro Biomes & Shaders vs Simple Colors */}
+              <div className="flex border-b border-[#E2D6B5] bg-[#F4EBD0]/40 rounded-t-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setBiomeSubTab('pro')}
+                  className={`flex-1 py-1.5 text-center text-[11px] font-bold transition-all cursor-pointer border-b-2 ${
+                    biomeSubTab === 'pro'
+                      ? 'border-[#b45309] text-[#78350f] bg-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Biomes & Shaders
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBiomeSubTab('colors')}
+                  className={`flex-1 py-1.5 text-center text-[11px] font-bold transition-all cursor-pointer border-b-2 ${
+                    biomeSubTab === 'colors'
+                      ? 'border-[#b45309] text-[#78350f] bg-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Simple Colors
+                </button>
+              </div>
+
+              {/* ----------------- TAB 1: PRO BIOMES & SHADERS ----------------- */}
+              {biomeSubTab === 'pro' && (
+                <div className="flex flex-col gap-2.5">
+                  {/* Active Selected Texture Card */}
+                  <div className="p-2 rounded-xl border border-amber-300 bg-amber-50/70 flex items-center gap-2.5 shadow-2xs">
+                    {activeBiomeObj.isPattern && activeBiomeObj.patternImageUrl ? (
                       <div
-                        className="w-5 h-5 rounded-full shrink-0 shadow-inner border border-black/20 bg-cover bg-center"
-                        style={{ backgroundImage: `url(${b.patternImageUrl})` }}
+                        className="w-8 h-8 rounded-lg shrink-0 shadow-inner border border-black/20 bg-cover bg-center"
+                        style={{ backgroundImage: `url(${activeBiomeObj.patternImageUrl})` }}
                       />
                     ) : (
                       <span
-                        className="w-5 h-5 rounded-full shrink-0 shadow-inner border border-black/20"
-                        style={{ backgroundColor: b.color }}
+                        className="w-8 h-8 rounded-lg shrink-0 shadow-inner border border-black/20"
+                        style={{ backgroundColor: activeBiomeObj.color }}
                       />
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="font-bold text-slate-900 text-xs leading-tight flex items-center gap-1.5">
-                        <span className="truncate">{b.name}</span>
-                        <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300">
-                          {b.isPattern ? 'Pattern' : 'Shader'}
-                        </span>
+                      <div className="text-[10px] text-amber-800 uppercase font-bold tracking-wider leading-none">Active Texture</div>
+                      <div className="font-bold text-slate-900 text-xs truncate leading-tight mt-0.5">{activeBiomeObj.name || (activeBiomeObj as any).label}</div>
+                      <div className="text-[9px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                        <span className="capitalize">{activeBiomeObj.detailType || 'biome'}</span>
+                        <span>•</span>
+                        <span>{isWaterTexture ? 'Water/Sea' : 'Land'}</span>
                       </div>
-                      <div className="text-[10px] text-slate-500 capitalize">{b.detailType || 'custom'}</div>
                     </div>
-                    {(brushSettings.selectedBiome === b.id || activeBiome === b.id) && (
-                      <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    {brushSettings.brushColorOverride && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateBrushSettings({ brushColorOverride: undefined })}
+                        className="text-[10px] underline text-amber-800 font-semibold"
+                        title="Reset custom color override"
+                      >
+                        Reset Tint
+                      </button>
                     )}
-                  </button>
-                ))}
-              </div>
-            )}
+                  </div>
 
-            {/* Water textures: paint lakes, seas, marshes, and coastal shelves directly. */}
-            <div className="flex flex-col gap-1.5 pb-2 border-b border-[#E2D6B5]/60">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Water Textures</span>
-              <div className="grid grid-cols-2 gap-1.5">
-                {BIOMES.filter((b) => ['shallow_shallows', 'deep_ocean', 'river_water'].includes(b.id)).map((b) => {
-                  const selected = (brushSettings.selectedBiome || activeBiome) === b.id;
-                  return (
-                    <button
-                      key={b.id}
-                      id={`water-texture-${b.id}`}
-                      onClick={() => {
-                        onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
-                        onSelectBiome(b.id);
-                      }}
-                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${selected ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-400' : 'bg-white/70 border-[#E2D6B5] hover:bg-blue-50'}`}
-                    >
-                      <span className="block w-5 h-5 rounded-full border border-black/20 mb-1" style={{ backgroundColor: b.color }} />
-                      <span className="block text-[10px] font-semibold text-slate-700 leading-tight">{b.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-[10px] text-slate-500">Carve the water shape with Landmass Sculptor, then paint its texture here. No assets required.</p>
-            </div>
+                  {/* MINIMAL MODE: Clean, compact 8-texture quick picker */}
+                  {biomeViewMode === 'minimal' && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-700">Quick Palette</span>
+                        <button
+                          type="button"
+                          onClick={() => setBiomeViewMode('full')}
+                          className="text-amber-800 hover:underline text-[10px] font-bold flex items-center gap-0.5"
+                        >
+                          <span>Full Library ({allBiomesList.length})</span>
+                          <ChevronDown className="w-3 h-3" />
+                        </button>
+                      </div>
 
-            {/* Standard Built-in Biomes */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Standard Biomes</span>
-              {BIOMES.map((b) => {
-                const currentSelected = brushSettings.selectedBiome || activeBiome;
-                const canonicalSelected = BIOME_ALIAS_TO_CANONICAL[currentSelected?.toLowerCase()] || currentSelected;
-                const isSelected =
-                  currentSelected === b.id ||
-                  canonicalSelected === b.id ||
-                  activeBiome === b.id;
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {quickBiomes.map((b) => {
+                          const isSel = (brushSettings.selectedBiome || activeBiome) === b.id;
+                          return (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => {
+                                onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
+                                onSelectBiome(b.id as any);
+                              }}
+                              className={`p-1.5 rounded-lg border text-center flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                                isSel
+                                  ? 'bg-amber-100 border-[#b45309] ring-1 ring-[#b45309] shadow-2xs font-bold'
+                                  : 'bg-white hover:bg-amber-50/70 border-[#E2D6B5]'
+                              }`}
+                              title={`${b.name || (b as any).label} (${b.detailType || 'custom'})`}
+                            >
+                              {b.isPattern && b.patternImageUrl ? (
+                                <div
+                                  className="w-6 h-6 rounded-md shadow-inner border border-black/20 bg-cover bg-center"
+                                  style={{ backgroundImage: `url(${b.patternImageUrl})` }}
+                                />
+                              ) : (
+                                <span
+                                  className="w-6 h-6 rounded-md shadow-inner border border-black/20"
+                                  style={{ backgroundColor: b.color }}
+                                />
+                              )}
+                              <span className="text-[9px] text-slate-800 truncate w-full leading-tight font-medium">
+                                {b.name || (b as any).label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
 
-                return (
-                  <button
-                    key={b.id}
-                    id={`biome-standard-${b.id}`}
-                    onClick={() => {
-                      onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
-                      onSelectBiome(b.id);
-                    }}
-                    className={`p-2 rounded-xl border flex items-center gap-3 transition-all cursor-pointer text-left ${
-                      isSelected
-                        ? 'bg-white border-[#b45309] shadow-xs ring-1 ring-[#b45309]'
-                        : 'bg-white/60 border-[#E2D6B5] hover:bg-white'
-                    }`}
-                  >
-                    <span
-                      className="w-5 h-5 rounded-full shrink-0 shadow-inner border border-black/20"
-                      style={{ backgroundColor: b.color }}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-slate-900 text-xs leading-tight">{b.label}</div>
-                      <div className="text-[10px] text-slate-500 truncate">{b.desc}</div>
+                      <button
+                        id="btn-open-full-texture-library"
+                        type="button"
+                        onClick={() => setBiomeViewMode('full')}
+                        className="w-full py-2 px-3 rounded-xl border border-dashed border-[#b45309] bg-white hover:bg-amber-50 text-[#78350f] font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all shadow-2xs mt-0.5"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Open Full Texture Library ({allBiomesList.length})</span>
+                        <ChevronDown className="w-3.5 h-3.5 text-amber-700" />
+                      </button>
                     </div>
-                    {isSelected && (
-                      <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  )}
+
+                  {/* FULL MODE: Categorized complete library with search */}
+                  {biomeViewMode === 'full' && (
+                    <div className="flex flex-col gap-3">
+                      {/* Search & Collapse header */}
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative flex-1">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={biomeSearch}
+                            onChange={(e) => setBiomeSearch(e.target.value)}
+                            placeholder="Search textures..."
+                            className="w-full pl-8 pr-2.5 py-1 text-xs rounded-lg border border-[#E2D6B5] bg-white focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBiomeViewMode('minimal')}
+                          className="px-2 py-1 rounded-lg border border-[#E2D6B5] bg-white hover:bg-amber-50 text-slate-700 text-xs font-semibold cursor-pointer"
+                          title="Collapse to minimal mode"
+                        >
+                          Minimal View
+                        </button>
+                      </div>
+
+                      {/* Section 1: Custom Shaders & Imported Textures */}
+                      {filteredCustomBiomes.length > 0 && (
+                        <div className="flex flex-col gap-1.5 pb-2 border-b border-[#E2D6B5]/60">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                              Custom & Imported Shaders ({filteredCustomBiomes.length})
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-0.5">
+                            {filteredCustomBiomes.map((b) => {
+                              const isSel = (brushSettings.selectedBiome || activeBiome) === b.id;
+                              return (
+                                <button
+                                  key={b.id}
+                                  type="button"
+                                  onClick={() => {
+                                    onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
+                                    onSelectBiome(b.id as any);
+                                  }}
+                                  className={`p-2 rounded-xl border flex items-center gap-2.5 transition-all cursor-pointer text-left ${
+                                    isSel
+                                      ? 'bg-amber-50 border-[#b45309] shadow-2xs ring-1 ring-[#b45309]'
+                                      : 'bg-white hover:bg-amber-50/50 border-[#E2D6B5]'
+                                  }`}
+                                >
+                                  {b.isPattern && b.patternImageUrl ? (
+                                    <div
+                                      className="w-6 h-6 rounded-md shrink-0 shadow-inner border border-black/20 bg-cover bg-center"
+                                      style={{ backgroundImage: `url(${b.patternImageUrl})` }}
+                                    />
+                                  ) : (
+                                    <span
+                                      className="w-6 h-6 rounded-md shrink-0 shadow-inner border border-black/20"
+                                      style={{ backgroundColor: b.color }}
+                                    />
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-bold text-slate-900 text-xs truncate leading-tight flex items-center gap-1.5">
+                                      <span>{b.name}</span>
+                                      <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300 font-mono">
+                                        {b.isPattern ? 'Pattern' : 'Shader'}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 capitalize">{b.detailType || 'custom'}</div>
+                                  </div>
+                                  {isSel && <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Section 2: Water & Sea Textures */}
+                      {filteredWaterBiomes.length > 0 && (
+                        <div className="flex flex-col gap-1.5 pb-2 border-b border-[#E2D6B5]/60">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Water & Sea Shaders</span>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {filteredWaterBiomes.map((b) => {
+                              const isSel = (brushSettings.selectedBiome || activeBiome) === b.id;
+                              return (
+                                <button
+                                  key={b.id}
+                                  id={`water-texture-${b.id}`}
+                                  type="button"
+                                  onClick={() => {
+                                    onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
+                                    onSelectBiome(b.id);
+                                  }}
+                                  className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                                    isSel ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-400' : 'bg-white hover:bg-blue-50/70 border-[#E2D6B5]'
+                                  }`}
+                                >
+                                  <span className="block w-5 h-5 rounded-full border border-black/20 mb-1" style={{ backgroundColor: b.color }} />
+                                  <span className="block text-[10px] font-semibold text-slate-800 leading-tight">{b.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Section 3: Land & Mountain Biomes */}
+                      {filteredLandBiomes.length > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Terrain & Land Biomes</span>
+                          <div className="flex flex-col gap-1 max-h-56 overflow-y-auto pr-0.5">
+                            {filteredLandBiomes.map((b) => {
+                              const isSel =
+                                currentSelectedId === b.id ||
+                                canonicalId === b.id ||
+                                activeBiome === b.id;
+                              return (
+                                <button
+                                  key={b.id}
+                                  id={`biome-standard-${b.id}`}
+                                  type="button"
+                                  onClick={() => {
+                                    onUpdateBrushSettings({ selectedBiome: b.id, elevation: b.defaultElevation });
+                                    onSelectBiome(b.id);
+                                  }}
+                                  className={`p-2 rounded-xl border flex items-center gap-2.5 transition-all cursor-pointer text-left ${
+                                    isSel ? 'bg-white border-[#b45309] shadow-2xs ring-1 ring-[#b45309]' : 'bg-white/70 hover:bg-white border-[#E2D6B5]'
+                                  }`}
+                                >
+                                  <span
+                                    className="w-5 h-5 rounded-full shrink-0 shadow-inner border border-black/20"
+                                    style={{ backgroundColor: b.color }}
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-bold text-slate-900 text-xs leading-tight">{b.label}</div>
+                                    <div className="text-[10px] text-slate-500 truncate">{b.desc}</div>
+                                  </div>
+                                  {isSel && <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ----------------- TAB 2: SIMPLE FLAT COLORS ----------------- */}
+              {biomeSubTab === 'colors' && (
+                <div className="flex flex-col gap-2.5">
+                  <div className="text-[11px] text-slate-600 leading-normal">
+                    Flat tint swatches for quick color washes, regional shading, and non-pro tinting.
+                  </div>
+
+                  {/* Curated Flat Color Grid */}
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {flatColorPresets.map((swatch) => {
+                      const isSel = brushSettings.brushColorOverride === swatch.color;
+                      return (
+                        <button
+                          key={swatch.color}
+                          type="button"
+                          onClick={() => onUpdateBrushSettings({ brushColorOverride: swatch.color })}
+                          className={`p-1.5 rounded-lg border flex flex-col items-center gap-1 transition-all cursor-pointer ${
+                            isSel ? 'bg-amber-100 border-[#b45309] ring-2 ring-[#b45309]' : 'bg-white hover:bg-amber-50 border-[#E2D6B5]'
+                          }`}
+                          title={swatch.name}
+                        >
+                          <span className="w-6 h-6 rounded-md shadow-inner border border-black/20" style={{ backgroundColor: swatch.color }} />
+                          <span className="text-[9px] text-slate-700 truncate w-full text-center">{swatch.name.split(' ')[0]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Custom Color Tint & Eyedropper */}
+                  <div className="p-2.5 rounded-xl border border-violet-200 bg-violet-50/70 flex flex-col gap-2 mt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-violet-900 text-xs flex items-center gap-1.5">
+                        <Palette className="w-3.5 h-3.5 text-violet-700" />
+                        Custom Tint Color
+                      </span>
+                      {brushSettings.brushColorOverride && (
+                        <button
+                          type="button"
+                          onClick={() => onUpdateBrushSettings({ brushColorOverride: undefined })}
+                          className="text-[10px] text-violet-700 hover:underline font-semibold"
+                        >
+                          Reset Tint
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg border border-black/20 shadow-inner relative overflow-hidden shrink-0" style={{ backgroundColor: brushSettings.brushColorOverride || '#4d8036' }}>
+                        <input
+                          type="color"
+                          value={brushSettings.brushColorOverride || '#4d8036'}
+                          onChange={(e) => onUpdateBrushSettings({ brushColorOverride: e.target.value })}
+                          className="opacity-0 w-full h-full cursor-pointer absolute inset-0"
+                          title="Click to pick custom color"
+                        />
+                      </div>
+                      <span className="text-xs font-mono text-violet-950 flex-1">{brushSettings.brushColorOverride || 'No tint override'}</span>
+                    </div>
+
+                    {onSampleMapColor && (
+                      <button
+                        id="btn-sample-map-color-simple"
+                        type="button"
+                        onClick={onSampleMapColor}
+                        className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          isEyedropperActive
+                            ? 'bg-violet-600 border-violet-700 text-white animate-pulse shadow-sm'
+                            : 'border-violet-300 bg-white text-violet-900 hover:bg-violet-100'
+                        }`}
+                        title="Sample color directly from map canvas"
+                      >
+                        <Pipette className="w-3.5 h-3.5" />
+                        <span>{isEyedropperActive ? 'Click on map to sample (Esc to cancel)' : 'Sample color with Eyedropper'}</span>
+                      </button>
                     )}
-                  </button>
-                );
-              })}
+                  </div>
+                </div>
+              )}
             </div>
-
-            {/* Brush Size & Opacity */}
-            <div className="flex flex-col gap-1.5 pt-2 border-t border-[#E2D6B5]/50">
-              <div className="flex justify-between items-center text-[11px]">
-                <span className="font-semibold text-slate-700">Brush Radius</span>
-                <span className="font-mono font-bold text-amber-700">{brushSettings.size}px</span>
-              </div>
-              <input
-                type="range"
-                min="15"
-                max="250"
-                step="5"
-                value={brushSettings.size}
-                onChange={(e) => onUpdateBrushSettings({ size: Number(e.target.value) })}
-                className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <div className="flex justify-between items-center text-[11px]">
-                <span className="font-semibold text-slate-700">Texture Opacity</span>
-                <span className="font-mono font-bold text-amber-700">{Math.round((brushSettings.opacity ?? 0.85) * 100)}%</span>
-              </div>
-              <input
-                type="range"
-                min="0.1"
-                max="1.0"
-                step="0.05"
-                value={brushSettings.opacity ?? 0.85}
-                onChange={(e) => onUpdateBrushSettings({ opacity: Number(e.target.value) })}
-                className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
-              />
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ============================================================== */}
-        {/* REGION FILL TOOL */}
-        {/* ============================================================== */}
-        {activeTool === 'fill' ? (
-          <div className="flex flex-col gap-3.5">
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <div className="font-semibold">One-click region painting</div>
-              <p className="mt-1 text-[10px] leading-relaxed">Choose a land or water biome, then click a connected region. Land biomes fill land only; water biomes fill water only.</p>
-            </div>
-            <button onClick={() => onUpdateBrushSettings({ selectedBiome: 'lush_grass' })} className="rounded-lg border border-[#E2D6B5] bg-white px-3 py-2 text-xs font-semibold hover:bg-[#FDF6E3]">Use default land fill</button>
-            <button onClick={() => onUpdateBrushSettings({ selectedBiome: 'shallow_shallows' })} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-900 hover:bg-blue-100">Use shallow water fill</button>
-            <p className="text-[10px] text-slate-500">For another biome, select it in the Biome Texture Brush, then return here.</p>
-          </div>
-        ) : null}
-
-        {/* ============================================================== */}
-        {/* 4. ELEVATION SCULPTOR */}
+        {/* 4. ELEVATION & RELIEF SCULPTOR (Streamlined Artist Controls) */}
         {/* ============================================================== */}
         {activeTool === 'elevation' && (
           <div className="flex flex-col gap-3.5">
-            <button
-              type="button"
-              onClick={onToggleNumericHeightfield}
-              className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${numericHeightfieldEnabled ? 'border-emerald-500 bg-emerald-50 text-emerald-900' : 'border-[#E2D6B5] bg-white text-slate-700'}`}
-            >
-              <span className="font-semibold">Numeric heightfield: {numericHeightfieldEnabled ? 'On' : 'Off'}</span>
-              <span className="block text-[10px] opacity-75">Optional 4px grid, stored in meters. Off keeps the lightweight raster workflow.</span>
-            </button>
-            <button
-              type="button"
-              disabled={!numericHeightfieldEnabled}
-              onClick={onToggleHeightfieldOverlay}
-              className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${showHeightfieldOverlay ? 'border-sky-500 bg-sky-50 text-sky-900' : 'border-[#E2D6B5] bg-white text-slate-700'} disabled:opacity-40`}
-            >
-              {showHeightfieldOverlay ? 'Hide' : 'Show'} height colors and contour overlay
-            </button>
-            {numericHeightfieldEnabled && (
-              <div className="rounded-lg border border-sky-200 bg-sky-50 p-2 text-xs text-sky-900">
-                <div className="font-semibold">Height inspector</div>
-                <div className="text-[10px] opacity-75">Hover the map to inspect the numeric grid.</div>
-                <div className="mt-1 flex items-center gap-2">
-                  <span className="font-mono">{currentHeightMeters == null ? '—' : `${currentHeightMeters.toFixed(1)} m`}</span>
-                  {onSetHeightMeters && currentHeightMeters != null && <input type="number" step="1" defaultValue={Math.round(currentHeightMeters)} onKeyDown={(e) => { if (e.key === 'Enter') onSetHeightMeters(Number((e.target as HTMLInputElement).value)); }} className="w-24 rounded border border-sky-200 px-1 py-0.5" />}
-                </div>
-              </div>
-            )}
-            <span className="font-semibold text-slate-800 text-[11px]">Relief Mode</span>
-            <div className="grid grid-cols-2 gap-1.5">
-              {[
-                { id: 'raise', label: 'Raise Highlands' },
-                { id: 'lower', label: 'Lower Basin' },
-                { id: 'plateau', label: 'Plateau Table' },
-                { id: 'smooth', label: 'Smooth Slopes' },
-              ].map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => onUpdateBrushSettings({ elevationMode: m.id as any })}
-                  className={`py-2 rounded-lg font-medium border text-center transition-all cursor-pointer text-xs ${
-                    brushSettings.elevationMode === m.id
-                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
-                      : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Numeric height controls */}
-            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#E2D6B5]/50">
-              <label className="flex flex-col gap-1 text-[10px] font-semibold text-slate-700">
-                {brushSettings.elevationMode === 'plateau' ? 'Target height (m)' : 'Height step (m)'}
-                <input
-                  id="height-paint-value"
-                  type="number"
-                  min="1"
-                  max="20000"
-                  step="1"
-                  value={Math.abs(brushSettings.elevation)}
-                  onChange={(e) => onUpdateBrushSettings({ elevation: Math.max(1, Number(e.target.value) || 1) })}
-                  className="rounded border border-[#E2D6B5] bg-white px-2 py-1.5 text-xs font-normal"
-                />
-              </label>
-              <div className="flex flex-col justify-end text-[10px] text-slate-500">
-                <span>Raise/lower uses this as meters per dab.</span>
-                <span>Plateau sets terrain toward this height.</span>
+            <div className="flex flex-col gap-1.5">
+              <span className="font-semibold text-slate-800 text-[11px]">Sculpting Brush Mode</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { id: 'raise', label: 'Raise Ridges' },
+                  { id: 'lower', label: 'Carve Valley' },
+                  { id: 'smooth', label: 'Smooth Slopes' },
+                  { id: 'plateau', label: 'Flat Mesa' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => onUpdateBrushSettings({ elevationMode: m.id as any })}
+                    className={`py-2 rounded-lg font-semibold border text-center transition-all cursor-pointer text-xs ${
+                      brushSettings.elevationMode === m.id
+                        ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                        : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Brush Size & Strength */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+            {/* Brush Size & Relief Strength */}
+            <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
                 <span className="font-semibold text-slate-700">Brush Radius</span>
                 <span className="font-mono font-bold text-amber-700">{brushSettings.size}px</span>
@@ -1275,29 +2207,62 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 onChange={(e) => onUpdateBrushSettings({ size: Number(e.target.value) })}
                 className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
               />
+
+              <div className="flex justify-between items-center text-[11px] pt-1">
+                <span className="font-semibold text-slate-700">
+                  {brushSettings.elevationMode === 'plateau' ? 'Plateau Elevation Level' : 'Sculpt Intensity'}
+                </span>
+                <span className="font-mono font-bold text-amber-700">{Math.min(100, Math.max(5, Math.abs(brushSettings.elevation)))}%</span>
+              </div>
+              <input
+                id="height-paint-value"
+                type="range"
+                min="5"
+                max="100"
+                step="5"
+                value={Math.min(100, Math.max(5, Math.abs(brushSettings.elevation)))}
+                onChange={(e) => onUpdateBrushSettings({ elevation: Number(e.target.value) })}
+                className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+              />
             </div>
 
-            {/* Hydraulic Erosion Simulation Button */}
+            {/* Topographic Contour View Quick Toggle */}
+            {onToggleTopographicalView && (
+              <div className="pt-1 border-t border-[#E2D6B5]/50">
+                <button
+                  type="button"
+                  onClick={onToggleTopographicalView}
+                  className={`w-full py-2 px-3 rounded-lg border font-semibold text-xs flex items-center justify-between cursor-pointer transition-all ${
+                    topographicalView
+                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
+                      : 'bg-white text-slate-700 border-[#E2D6B5]'
+                  }`}
+                >
+                  <span>Topographic Contour View</span>
+                  <span className="text-[10px] font-mono uppercase">{topographicalView ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* 1-Click Geological Passes */}
             <div className="pt-2 border-t border-[#E2D6B5]/50 flex flex-col gap-1.5">
+              <span className="font-semibold text-slate-800 text-[11px]">Automated Relief Passes</span>
+              {onDeriveTopography && (
+                <button
+                  id="generate-world-features-btn"
+                  onClick={onDeriveTopography}
+                  className="w-full py-2 px-3 rounded-lg bg-sky-100 hover:bg-sky-200 border border-sky-300 font-semibold text-sky-900 text-xs flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                  title="Derive natural mountain ridges from the interior of your painted continents"
+                >
+                  <MountainSnow className="w-4 h-4 text-sky-700" /> Derive Continental Ridges
+                </button>
+              )}
               <button
                 onClick={onHydraulicErosion}
                 className="w-full py-2 px-3 rounded-lg bg-amber-100 hover:bg-amber-200 border border-amber-300 font-semibold text-amber-900 text-xs flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
                 <Sparkles className="w-4 h-4 text-amber-700" /> Run Hydraulic Erosion
               </button>
-              <p className="text-[10px] text-slate-500 leading-tight">
-                Simulates real rainfall runoff carving realistic natural river gullies and sedimentary deposits.
-              </p>
-              {onDeriveTopography && (
-                <button
-                  id="generate-world-features-btn"
-                  onClick={onDeriveTopography}
-                  className="w-full py-2 px-3 rounded-lg bg-sky-100 hover:bg-sky-200 border border-sky-300 font-semibold text-sky-900 text-xs flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-                  title="Derive elevation from the landmass and generate editable rivers, roads, and settlement labels"
-                >
-                  <MountainSnow className="w-4 h-4 text-sky-700" /> Generate World Features
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -1334,45 +2299,121 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </button>
             </div>
 
-            {/* Quick Category Stamp Shelf (Instant variation switching with 0 modal opens) */}
+            {/* Quick Category Stamp Shelf + Multi-Stamp Variation Pool (Includes Custom Uploaded AI Assets) */}
             {(() => {
               const curCat = selectedStampAsset?.category || 'trees';
-              const variations = DEFAULT_STAMP_ASSETS.filter((a) => a.category === curCat).slice(0, 10);
-              if (variations.length <= 1) return null;
+              const allCombined = [...customAssets, ...DEFAULT_STAMP_ASSETS];
+              const variations = allCombined
+                .filter((a) => (curCat === 'custom' ? Boolean(a.isCustom) : a.category === curCat))
+                .slice(0, 20);
+              const poolIds = brushSettings.stampPoolIds || [];
+
+              const togglePoolItem = (id: string) => {
+                const exists = poolIds.includes(id);
+                const nextPool = exists ? poolIds.filter((item) => item !== id) : [...poolIds, id];
+                onUpdateBrushSettings({ stampPoolIds: nextPool });
+              };
+
+              if (variations.length === 0) return null;
               return (
-                <div className="flex flex-col gap-1.5 p-2 bg-white/70 rounded-xl border border-[#E2D6B5]">
+                <div className="flex flex-col gap-2 p-2.5 bg-white/80 rounded-xl border border-[#E2D6B5]">
                   <div className="flex items-center justify-between text-[10px]">
-                    <span className="font-semibold text-slate-700 capitalize">
-                      Quick {curCat.replace('_', ' ')} Variations
+                    <span className="font-bold text-slate-800 capitalize flex items-center gap-1">
+                      Quick {curCat.replace('_', ' ')} Shelf
+                      {customAssets.some((a) => a.category === curCat || curCat === 'custom') && (
+                        <span className="px-1 py-0.2 bg-amber-100 text-amber-800 rounded text-[9px] font-bold">
+                          +AI Custom
+                        </span>
+                      )}
                     </span>
-                    <span className="text-slate-400 font-mono">{variations.length} available</span>
+                    <span className="text-slate-400 font-mono">{variations.length} assets</span>
                   </div>
-                  <div className="grid grid-cols-5 gap-1.5">
+
+                  {/* Multi-Stamp Variation Pool Bar */}
+                  <div className="flex items-center justify-between bg-[#F4EBD0]/60 px-2 py-1 rounded-lg border border-[#E2D6B5]">
+                    <span className="text-[10px] font-semibold text-amber-950">
+                      Multi-Stamp Pool:{' '}
+                      <strong className="text-amber-700">
+                        {poolIds.length > 0 ? `${poolIds.length} active` : 'Off (Single)'}
+                      </strong>
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        id="btn-fill-stamp-pool"
+                        type="button"
+                        onClick={() => onUpdateBrushSettings({ stampPoolIds: variations.map((v) => v.id) })}
+                        className="px-1.5 py-0.5 rounded bg-amber-700 text-white text-[9px] font-semibold hover:bg-amber-800 cursor-pointer"
+                        title="Add all variations in this category to the random stroke pool"
+                      >
+                        Pool All
+                      </button>
+                      {poolIds.length > 0 && (
+                        <button
+                          id="btn-clear-stamp-pool"
+                          type="button"
+                          onClick={() => onUpdateBrushSettings({ stampPoolIds: [] })}
+                          className="px-1.5 py-0.5 rounded bg-white text-slate-600 border border-[#E2D6B5] text-[9px] font-semibold hover:bg-red-50 hover:text-red-700 cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-1.5 max-h-36 overflow-y-auto pr-0.5">
                     {variations.map((v) => {
                       const isCur = selectedStampAsset?.id === v.id;
+                      const inPool = poolIds.includes(v.id);
                       return (
-                        <button
-                          key={v.id}
-                          type="button"
-                          onClick={() => onUpdateBrushSettings({ selectedStampId: v.id })}
-                          className={`w-9 h-9 rounded-lg p-1 border flex items-center justify-center transition-all cursor-pointer ${
-                            isCur
-                              ? 'bg-amber-100 border-amber-600 ring-2 ring-amber-400 shadow-xs'
-                              : 'bg-white border-[#E2D6B5] hover:border-amber-400 hover:bg-amber-50/50'
-                          }`}
-                          title={v.name}
-                        >
-                          <img
-                            src={v.imageUrl}
-                            alt={v.name}
-                            loading="lazy"
-                            decoding="async"
-                            className="max-w-full max-h-full object-contain pointer-events-none"
-                          />
-                        </button>
+                        <div key={v.id} className="relative group">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              if (e.shiftKey) {
+                                togglePoolItem(v.id);
+                              } else {
+                                onUpdateBrushSettings({ selectedStampId: v.id });
+                              }
+                            }}
+                            className={`w-full h-10 rounded-lg p-1 border flex items-center justify-center transition-all cursor-pointer ${
+                              isCur
+                                ? 'bg-amber-100 border-amber-600 ring-2 ring-amber-400 shadow-xs'
+                                : inPool
+                                ? 'bg-emerald-50/90 border-emerald-500 ring-1 ring-emerald-400'
+                                : 'bg-white border-[#E2D6B5] hover:border-amber-400 hover:bg-amber-50/50'
+                            }`}
+                            title={`${v.name}${v.isCustom ? ' (Custom AI Asset)' : ''} — Click to select, Shift+Click or '+' to toggle in Multi-Stamp Pool`}
+                          >
+                            <img
+                              src={v.imageUrl}
+                              alt={v.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="max-w-full max-h-full object-contain pointer-events-none"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePoolItem(v.id);
+                            }}
+                            className={`absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center border shadow-xs cursor-pointer transition-opacity ${
+                              inPool
+                                ? 'bg-emerald-600 text-white border-emerald-700 opacity-100'
+                                : 'bg-white text-slate-700 border-slate-300 opacity-0 group-hover:opacity-100'
+                            }`}
+                            title={inPool ? 'Remove from Multi-Stamp Pool' : 'Add to Multi-Stamp Pool'}
+                          >
+                            {inPool ? '✓' : '+'}
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
+                  <span className="text-[9px] text-slate-500 leading-tight">
+                    Tip: Click <strong>+</strong> (or Shift+Click) on multiple stamps to sample randomly on every stroke!
+                  </span>
                 </div>
               );
             })()}
@@ -1413,7 +2454,6 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 </button>
               </div>
 
-              {/* Scatter Configuration Options */}
               {brushSettings.stampPlacementMode === 'scatter' && (
                 <div className="flex flex-col gap-2 mt-1 p-2 bg-white/70 rounded-lg border border-[#E2D6B5]">
                   <div className="flex justify-between items-center text-[10px]">
@@ -1451,10 +2491,10 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               )}
             </div>
 
-            {/* Stamp Scale with Range Slider and Custom Number Input */}
+            {/* Stamp Scale & Opacity */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
-                <span className="font-semibold text-slate-700">Stamp Scale</span>
+                <span className="font-semibold text-slate-700">Stamp Scale (Alt+Wheel)</span>
                 <div className="flex items-center gap-1">
                   <input
                     type="number"
@@ -1468,13 +2508,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                         onUpdateBrushSettings({ stampScale: Math.max(0.05, Math.min(10, val / 100)) });
                       }
                     }}
-                    onKeyDown={(e) => {
-                      // Restrict to number keys, arrows, backspace, delete only
-                      if (!/[\d]|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Tab/.test(e.key)) {
-                        e.preventDefault();
-                      }
-                    }}
-                    className="w-14 px-1.5 py-0.5 text-right font-mono font-bold text-amber-900 bg-white border border-[#E2D6B5] rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    className="w-14 px-1.5 py-0.5 text-right font-mono font-bold text-amber-900 bg-white border border-[#E2D6B5] rounded text-[11px]"
                   />
                   <span className="text-[10px] text-slate-500 font-mono">%</span>
                 </div>
@@ -1490,7 +2524,6 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               />
             </div>
 
-            {/* Stamp Opacity (User Request 3: "Add opacity to Assets As option") */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
                 <span className="font-semibold text-slate-700">Asset Opacity</span>
@@ -1509,10 +2542,10 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               />
             </div>
 
-            {/* Rotation & Randomness */}
+            {/* Rotation & Flipping */}
             <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
               <div className="flex justify-between items-center text-[11px]">
-                <span className="font-semibold text-slate-700">Rotation Angle</span>
+                <span className="font-semibold text-slate-700">Rotation (Shift+Wheel)</span>
                 <span className="font-mono font-bold text-amber-700">{brushSettings.stampRotation ?? 0}°</span>
               </div>
               <input
@@ -1525,16 +2558,16 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
               />
               <div className="flex items-center justify-between pt-1">
-                <label className="flex items-center gap-2 cursor-pointer text-[11px]">
+                <label className="flex items-center gap-1.5 cursor-pointer text-[11px]">
                   <input
                     type="checkbox"
                     checked={Boolean(brushSettings.randomizeRotation)}
                     onChange={(e) => onUpdateBrushSettings({ randomizeRotation: e.target.checked })}
                     className="accent-amber-700 rounded"
                   />
-                  <span>Random Angle Variance</span>
+                  <span>Random Angle</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer text-[11px]">
+                <label className="flex items-center gap-1.5 cursor-pointer text-[11px]">
                   <input
                     type="checkbox"
                     checked={Boolean(brushSettings.randomizeScale)}
@@ -1544,44 +2577,28 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   <span>Random Size (±15%)</span>
                 </label>
               </div>
-            </div>
-
-            {/* Placement Flipping (Flip X & Flip Y before stamping) */}
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
-              <div className="flex justify-between items-center text-[11px]">
-                <span className="font-semibold text-slate-700">Placement Flipping</span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {brushSettings.stampFlipX ? 'Flip X ' : ''}
-                  {brushSettings.stampFlipY ? 'Flip Y ' : ''}
-                  {!brushSettings.stampFlipX && !brushSettings.stampFlipY ? 'Standard' : ''}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
                 <button
                   id="btn-brush-flip-x"
                   onClick={() => onUpdateBrushSettings({ stampFlipX: !brushSettings.stampFlipX })}
-                  className={`py-1.5 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                  className={`py-1 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer ${
                     brushSettings.stampFlipX
-                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
                       : 'bg-white hover:bg-slate-50 text-slate-700 border-[#E2D6B5]'
                   }`}
-                  title="Flip stamp horizontally before placing (Flip X)"
                 >
-                  <FlipHorizontal className="w-3.5 h-3.5" />
-                  <span>Flip X</span>
+                  <FlipHorizontal className="w-3.5 h-3.5" /> Flip X
                 </button>
                 <button
                   id="btn-brush-flip-y"
                   onClick={() => onUpdateBrushSettings({ stampFlipY: !brushSettings.stampFlipY })}
-                  className={`py-1.5 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                  className={`py-1 px-2 rounded font-medium border text-[11px] flex items-center justify-center gap-1.5 cursor-pointer ${
                     brushSettings.stampFlipY
-                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18] shadow-xs'
+                      ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
                       : 'bg-white hover:bg-slate-50 text-slate-700 border-[#E2D6B5]'
                   }`}
-                  title="Flip stamp vertically before placing (Flip Y)"
                 >
-                  <FlipVertical className="w-3.5 h-3.5" />
-                  <span>Flip Y</span>
+                  <FlipVertical className="w-3.5 h-3.5" /> Flip Y
                 </button>
               </div>
               <label className="flex items-center gap-2 cursor-pointer text-[11px] pt-0.5 text-slate-700 select-none">
@@ -1594,6 +2611,136 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 />
                 <span>Organic Random Flip X (for forests/mountains)</span>
               </label>
+            </div>
+
+            {/* Collapsible: Pre-Placement Visual Blending & HSBC Grading */}
+            <div className="flex flex-col border-t border-[#E2D6B5]/60 pt-1.5">
+              <button
+                id="btn-toggle-brush-grading"
+                type="button"
+                onClick={() => toggleSection('brushGrading')}
+                className="flex items-center justify-between py-1 text-[11px] font-bold text-slate-800 hover:text-amber-800 cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Palette className="w-3.5 h-3.5 text-amber-700" />
+                  Pre-Placement Color Grading & Blend
+                </span>
+                {openSections.brushGrading ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+              {openSections.brushGrading && (
+                <div className="flex flex-col gap-2 pt-1.5 pb-1 pl-1 bg-white/60 p-2 rounded-lg border border-[#E2D6B5]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold text-slate-600">Blend Mode</span>
+                    <select
+                      value={brushSettings.stampBlendMode || 'source-over'}
+                      onChange={(e) => onUpdateBrushSettings({ stampBlendMode: e.target.value as StampBlendMode })}
+                      className="px-2 py-1 bg-white border border-[#E2D6B5] rounded text-[10px] font-semibold text-slate-800 cursor-pointer"
+                    >
+                      <option value="source-over">Normal</option>
+                      <option value="multiply">Multiply (Ink Blend)</option>
+                      <option value="overlay">Overlay</option>
+                      <option value="soft-light">Soft Light</option>
+                      <option value="screen">Screen</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-slate-600">Hue ({brushSettings.stampHue ?? 0}°)</span>
+                      <input
+                        type="range"
+                        min="-180"
+                        max="180"
+                        step="5"
+                        value={brushSettings.stampHue ?? 0}
+                        onChange={(e) => onUpdateBrushSettings({ stampHue: Number(e.target.value) })}
+                        className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-slate-600">Sat ({brushSettings.stampSaturation ?? 100}%)</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="200"
+                        step="5"
+                        value={brushSettings.stampSaturation ?? 100}
+                        onChange={(e) => onUpdateBrushSettings({ stampSaturation: Number(e.target.value) })}
+                        className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-slate-600">Bright ({brushSettings.stampBrightness ?? 100}%)</span>
+                      <input
+                        type="range"
+                        min="25"
+                        max="175"
+                        step="5"
+                        value={brushSettings.stampBrightness ?? 100}
+                        onChange={(e) => onUpdateBrushSettings({ stampBrightness: Number(e.target.value) })}
+                        className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-slate-600">Contrast ({brushSettings.stampContrast ?? 100}%)</span>
+                      <input
+                        type="range"
+                        min="25"
+                        max="175"
+                        step="5"
+                        value={brushSettings.stampContrast ?? 100}
+                        onChange={(e) => onUpdateBrushSettings({ stampContrast: Number(e.target.value) })}
+                        className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Collapsible: Pre-Placement Shadow & Ground Occlusion */}
+            <div className="flex flex-col border-t border-[#E2D6B5]/60 pt-1.5">
+              <button
+                id="btn-toggle-brush-shadow"
+                type="button"
+                onClick={() => toggleSection('brushShadow')}
+                className="flex items-center justify-between py-1 text-[11px] font-bold text-slate-800 hover:text-amber-800 cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                  Pre-Placement Shadow & Occlusion
+                </span>
+                {openSections.brushShadow ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+              {openSections.brushShadow && (
+                <div className="flex flex-col gap-2 pt-1.5 pb-1 pl-1 bg-white/60 p-2 rounded-lg border border-[#E2D6B5]">
+                  <label className="flex items-center justify-between text-[11px] cursor-pointer">
+                    <span className="font-medium text-slate-700">Drop Shadow on Place</span>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(brushSettings.stampShadowEnabled)}
+                      onChange={(e) => onUpdateBrushSettings({ stampShadowEnabled: e.target.checked })}
+                      className="accent-amber-700 rounded cursor-pointer"
+                    />
+                  </label>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-slate-600">Ground Occlusion</span>
+                      <span className="font-mono font-bold text-amber-800">
+                        {Math.round(Number(brushSettings.stampGroundOcclusion || 0) * 100)}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={Number(brushSettings.stampGroundOcclusion || 0)}
+                      onChange={(e) => onUpdateBrushSettings({ stampGroundOcclusion: Number(e.target.value) })}
+                      className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1664,102 +2811,32 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
               </div>
             </div>
 
-            {/* Surface Texture / Material (Shader Lab & Biome Textures) */}
-            <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-slate-800 text-[11px]">Surface Texture / Material</span>
-                {onOpenShaderLab && (
-                  <button
-                    onClick={onOpenShaderLab}
-                    className="text-[10px] font-medium text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1 cursor-pointer transition-colors"
-                    title="Open Shader Lab & Custom Biome Maker to create or import custom textures"
-                  >
-                    <Sparkles className="w-3 h-3 text-amber-600" /> Shader Lab
-                  </button>
+            {/* Compact Surface Material Override (Replaces 100-line duplicate swatch list) */}
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <span className="font-semibold text-slate-800 text-[11px]">Surface Material / Shader</span>
+              <select
+                value={pathTextureId || 'default'}
+                onChange={(e) => onPathTextureIdChange?.(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg border border-[#E2D6B5] bg-white text-xs font-medium cursor-pointer"
+              >
+                <option value="default">Solid Cartographic Tint</option>
+                <optgroup label="Standard Materials">
+                  {DEFAULT_BIOMES.map((biome) => (
+                    <option key={biome.id} value={biome.id}>
+                      {biome.name}
+                    </option>
+                  ))}
+                </optgroup>
+                {customBiomes && customBiomes.length > 0 && (
+                  <optgroup label="Custom Shaders">
+                    {customBiomes.map((biome) => (
+                      <option key={biome.id} value={biome.id}>
+                        {biome.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 )}
-              </div>
-
-              {/* Texture Swatches Grid */}
-              <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1">
-                {/* Default Cartographic Tint */}
-                <button
-                  onClick={() => onPathTextureIdChange?.('default')}
-                  className={`p-2 rounded-lg border text-left flex items-center gap-2 cursor-pointer transition-all ${
-                    pathTextureId === 'default'
-                      ? 'bg-amber-100/90 border-amber-600 ring-1 ring-amber-500 shadow-xs'
-                      : 'bg-white border-[#E2D6B5] hover:bg-[#FDF6E3]'
-                  }`}
-                >
-                  <span
-                    className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0"
-                    style={{ backgroundColor: pathColor || '#38bdf8' }}
-                  />
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-[11px] font-bold text-slate-800 truncate">Default Style</span>
-                    <span className="text-[9px] text-slate-500 truncate">Cartographic tint</span>
-                  </div>
-                </button>
-
-                {/* Default Biomes */}
-                {DEFAULT_BIOMES.map((biome) => {
-                  const isSelected = pathTextureId === biome.id;
-                  return (
-                    <button
-                      key={biome.id}
-                      onClick={() => onPathTextureIdChange?.(biome.id)}
-                      className={`p-2 rounded-lg border text-left flex items-center gap-2 cursor-pointer transition-all ${
-                        isSelected
-                          ? 'bg-amber-100/90 border-amber-600 ring-1 ring-amber-500 shadow-xs'
-                          : 'bg-white border-[#E2D6B5] hover:bg-[#FDF6E3]'
-                      }`}
-                    >
-                      <div
-                        className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0"
-                        style={{ backgroundColor: biome.color }}
-                      />
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-[11px] font-bold text-slate-800 truncate">{biome.name}</span>
-                        <span className="text-[9px] text-slate-500 truncate capitalize">{biome.detailType}</span>
-                      </div>
-                    </button>
-                  );
-                })}
-
-                {/* Custom Biomes from Shader Lab */}
-                {customBiomes && customBiomes.map((biome) => {
-                  const isSelected = pathTextureId === biome.id;
-                  return (
-                    <button
-                      key={biome.id}
-                      onClick={() => onPathTextureIdChange?.(biome.id)}
-                      className={`p-2 rounded-lg border text-left flex items-center gap-2 cursor-pointer transition-all ${
-                        isSelected
-                          ? 'bg-amber-100/90 border-amber-600 ring-1 ring-amber-500 shadow-xs'
-                          : 'bg-white border-[#E2D6B5] hover:bg-[#FDF6E3]'
-                      }`}
-                    >
-                      {biome.isPattern && biome.patternImageUrl ? (
-                        <div
-                          className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0 bg-cover bg-center"
-                          style={{ backgroundImage: `url(${biome.patternImageUrl})` }}
-                        />
-                      ) : (
-                        <span
-                          className="w-5 h-5 rounded-md border border-slate-300 shadow-xs shrink-0"
-                          style={{ backgroundColor: biome.color }}
-                        />
-                      )}
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-[11px] font-bold text-slate-800 truncate">{biome.name}</span>
-                        <span className="text-[9px] text-amber-600 font-semibold truncate">Custom Shader</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-[10px] text-slate-500 leading-tight">
-                Drawn routes and rivers take on the selected surface material. Use Shader Lab & Custom Biome Maker to create or import additional textures.
-              </p>
+              </select>
             </div>
 
             {/* Line Width */}
@@ -1851,6 +2928,186 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   className="accent-amber-700 rounded"
                 />
               </label>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* 6B. POLITICAL TERRITORY & REGION POLYGON TOOL */}
+        {/* ============================================================== */}
+        {activeTool === 'territory' && (
+          <div className="flex flex-col gap-3.5">
+            <div className="bg-amber-50/90 p-3 rounded-xl border border-amber-300 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-amber-700" />
+                  Political Region Polygon
+                </span>
+                <span className="font-mono text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
+                  {territoryVerticesCount} pts
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-900 leading-relaxed">
+                <strong>Click on the map</strong> to place border vertices around a kingdom or province. <strong>Double-click</strong> or press <strong>Enter</strong> to close and commit the territory.
+              </p>
+              {territoryVerticesCount > 0 && (
+                <div className="flex items-center gap-1.5 pt-1">
+                  <button
+                    id="btn-commit-territory"
+                    type="button"
+                    disabled={territoryVerticesCount < 3}
+                    onClick={onCommitTerritory}
+                    className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 disabled:opacity-40 text-white font-semibold text-[11px] cursor-pointer"
+                  >
+                    Finish Region ({territoryVerticesCount})
+                  </button>
+                  <button
+                    id="btn-undo-territory-vertex"
+                    type="button"
+                    onClick={onUndoTerritoryPoint}
+                    className="py-1.5 px-2 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold text-[11px] cursor-pointer"
+                  >
+                    Undo Pt
+                  </button>
+                  <button
+                    id="btn-cancel-territory"
+                    type="button"
+                    onClick={onCancelTerritory}
+                    className="py-1.5 px-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-semibold text-[11px] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold text-slate-800 text-[11px]">Kingdom / Territory Title</span>
+              <input
+                id="input-territory-name"
+                type="text"
+                value={brushSettings.territoryName ?? 'Kingdom of Eldoria'}
+                onChange={(e) => onUpdateBrushSettings({ territoryName: e.target.value })}
+                placeholder="e.g. Kingdom of Eldoria"
+                className="w-full px-2.5 py-1.5 bg-white border border-[#E2D6B5] rounded-md text-xs font-semibold"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#E2D6B5]/50">
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-slate-700 text-[11px]">Region Fill Color</span>
+                <input
+                  id="input-territory-fill-color"
+                  type="color"
+                  value={brushSettings.territoryFillColor || '#f59e0b'}
+                  onChange={(e) => {
+                    onUpdateBrushSettings({
+                      territoryFillColor: e.target.value,
+                      territoryBorderColor: e.target.value,
+                    });
+                  }}
+                  className="w-full h-8 rounded cursor-pointer border border-[#E2D6B5]"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-slate-700 text-[11px]">Border Line Color</span>
+                <input
+                  id="input-territory-border-color"
+                  type="color"
+                  value={brushSettings.territoryBorderColor || '#b45309'}
+                  onChange={(e) => onUpdateBrushSettings({ territoryBorderColor: e.target.value })}
+                  className="w-full h-8 rounded cursor-pointer border border-[#E2D6B5]"
+                />
+              </div>
+            </div>
+
+            {/* Quick Heraldic Faction Presets */}
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold text-slate-600">Heraldic Realm Swatches</span>
+              <div className="grid grid-cols-6 gap-1.5">
+                {[
+                  { fill: '#f59e0b', border: '#b45309', label: 'Solar Gold' },
+                  { fill: '#ef4444', border: '#991b1b', label: 'Crimson Empire' },
+                  { fill: '#3b82f6', border: '#1d4ed8', label: 'Sapphire Crown' },
+                  { fill: '#10b981', border: '#047857', label: 'Sylvan Emerald' },
+                  { fill: '#8b5cf6', border: '#5b21b6', label: 'Arcane Violet' },
+                  { fill: '#ec4899', border: '#9d174d', label: 'Rose Duchy' },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() =>
+                      onUpdateBrushSettings({
+                        territoryFillColor: preset.fill,
+                        territoryBorderColor: preset.border,
+                      })
+                    }
+                    className="h-6 rounded-md border border-slate-300 shadow-xs cursor-pointer transition-transform hover:scale-105"
+                    style={{ backgroundColor: preset.fill }}
+                    title={preset.label}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="font-semibold text-slate-700">Region Fill Opacity</span>
+                <span className="font-mono font-bold text-amber-700">
+                  {Math.round((brushSettings.territoryFillOpacity ?? 0.18) * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.04"
+                max="0.65"
+                step="0.02"
+                value={brushSettings.territoryFillOpacity ?? 0.18}
+                onChange={(e) => onUpdateBrushSettings({ territoryFillOpacity: Number(e.target.value) })}
+                className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="font-semibold text-slate-700">Inner Border Glow Width</span>
+                <span className="font-mono font-bold text-amber-700">
+                  {brushSettings.territoryInnerGlowWidth ?? 22}px
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="60"
+                step="2"
+                value={brushSettings.territoryInnerGlowWidth ?? 22}
+                onChange={(e) => onUpdateBrushSettings({ territoryInnerGlowWidth: Number(e.target.value) })}
+                className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-[#E2D6B5]/50">
+              <span className="font-semibold text-slate-700 text-[11px]">Border Line Style</span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[
+                  { id: 'dashed', label: 'Dashed' },
+                  { id: 'solid', label: 'Solid' },
+                  { id: 'double', label: 'Double' },
+                ].map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => onUpdateBrushSettings({ territoryBorderStyle: s.id as any })}
+                    className={`py-1.5 rounded-lg font-medium border text-xs cursor-pointer ${
+                      (brushSettings.territoryBorderStyle || 'dashed') === s.id
+                        ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
+                        : 'bg-white text-slate-700 border-[#E2D6B5] hover:bg-[#FDF6E3]'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -2026,6 +3283,7 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                   { id: 'stamps', label: 'Stamps Only' },
                   { id: 'labels', label: 'Labels Only' },
                   { id: 'paths', label: 'Rivers & Roads' },
+                  { id: 'territories', label: 'Territories Only' },
                 ].map((t) => (
                   <button
                     key={t.id}
@@ -2041,20 +3299,257 @@ export const ToolSettingsPanel: React.FC<ToolSettingsPanelProps> = ({
                 ))}
               </div>
             </div>
+
+            {/* Stamp Thinning Brush Probability (Inkarnate-style forest/mountain thinning) */}
+            <div className="flex flex-col gap-2 pt-2 border-t border-[#E2D6B5]/60 bg-white/70 p-2.5 rounded-xl border">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="font-bold text-slate-800">Stamp Thinning Density</span>
+                <span className="font-mono font-bold text-amber-800">
+                  {brushSettings.stampEraserDensity ?? 100}%
+                </span>
+              </div>
+              <input
+                id="slider-stamp-eraser-density"
+                type="range"
+                min="10"
+                max="100"
+                step="5"
+                value={brushSettings.stampEraserDensity ?? 100}
+                onChange={(e) => onUpdateBrushSettings({ stampEraserDensity: Number(e.target.value) })}
+                className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+              />
+              <div className="grid grid-cols-3 gap-1">
+                {[
+                  { val: 25, label: '25% Thin' },
+                  { val: 50, label: '50% Thin' },
+                  { val: 100, label: '100% Erase' },
+                ].map((preset) => (
+                  <button
+                    key={preset.val}
+                    type="button"
+                    onClick={() => onUpdateBrushSettings({ stampEraserDensity: preset.val })}
+                    className={`py-1 rounded text-[10px] font-semibold border cursor-pointer ${
+                      (brushSettings.stampEraserDensity ?? 100) === preset.val
+                        ? 'bg-amber-800 text-amber-100 border-amber-900'
+                        : 'bg-[#F4EBD0] text-slate-700 border-[#E2D6B5] hover:bg-[#EFE5C9]'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-500 leading-tight">
+                Lower density below 100% to organically thin out dense scattered forests or mountains on each brush pass without wiping clearings bare. Locked stamps are protected.
+              </p>
+            </div>
           </div>
         )}
 
         {/* ============================================================== */}
-        {/* 9. GRID OVERLAY TOOL */}
+        {/* 9. TACTICAL GRID, COMPASS ROSE, SCALE BAR & ATLAS FRAME TOOL */}
         {/* ============================================================== */}
-        {activeTool === 'grid' && (
+        {activeTool === 'grid' && gridConfig && onUpdateGridConfig && (
           <div className="flex flex-col gap-3.5">
-            <p className="text-[11px] text-slate-600 leading-relaxed">
-              Configure tactical square, hex, or isometric navigation grids and nautical rhumb lines via the Layers panel on the right.
-            </p>
+            {/* Grid Pattern Selector */}
+            <div className="flex flex-col gap-1.5">
+              <span className="font-semibold text-slate-800 text-[11px]">Grid Overlay Pattern</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { id: 'none', label: 'No Grid' },
+                  { id: 'square', label: 'Square Tactical' },
+                  { id: 'hex_flat', label: 'Hex (Flat Top)' },
+                  { id: 'hex_pointy', label: 'Hex (Pointy Top)' },
+                  { id: 'isometric', label: 'Isometric Diamond' },
+                ].map((g) => (
+                  <button
+                    key={g.id}
+                    id={`btn-grid-type-${g.id}`}
+                    type="button"
+                    onClick={() => onUpdateGridConfig({ type: g.id as GridType })}
+                    className={`py-2 px-2 rounded-lg font-semibold border text-xs cursor-pointer transition-all ${
+                      gridConfig.type === g.id
+                        ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
+                        : 'bg-white text-slate-700 border-[#E2D6B5]'
+                    }`}
+                  >
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Grid Size, Opacity & Color */}
+            {gridConfig.type !== 'none' && (
+              <div className="flex flex-col gap-2 pt-1 border-t border-[#E2D6B5]/50">
+                <div className="flex justify-between items-center text-[11px]">
+                  <span className="font-semibold text-slate-700">Cell Size</span>
+                  <span className="font-mono font-bold text-amber-700">{gridConfig.size}px</span>
+                </div>
+                <input
+                  type="range"
+                  min="24"
+                  max="180"
+                  step="4"
+                  value={gridConfig.size}
+                  onChange={(e) => onUpdateGridConfig({ size: Number(e.target.value) })}
+                  className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                />
+
+                <div className="flex justify-between items-center text-[11px] pt-1">
+                  <span className="font-semibold text-slate-700">Grid Line Opacity</span>
+                  <span className="font-mono font-bold text-amber-700">{Math.round((gridConfig.opacity ?? 0.25) * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.05"
+                  max="0.9"
+                  step="0.05"
+                  value={gridConfig.opacity ?? 0.25}
+                  onChange={(e) => onUpdateGridConfig({ opacity: Number(e.target.value) })}
+                  className="w-full accent-amber-600 cursor-pointer h-1.5 bg-[#EFE5C9] rounded-lg"
+                />
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="font-semibold text-slate-700 text-[11px]">Grid Line Color</span>
+                  <input
+                    type="color"
+                    value={gridConfig.color || '#ffffff'}
+                    onChange={(e) => onUpdateGridConfig({ color: e.target.value })}
+                    className="w-8 h-6 rounded cursor-pointer border border-[#E2D6B5]"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Cartographic Atlas Overlays (Compass Rose, Scale Bar, Frame, Rhumb Lines) */}
+            <div className="flex flex-col gap-2 pt-2 border-t border-[#E2D6B5]/50">
+              <span className="font-semibold text-slate-800 text-[11px]">Cartographic Atlas Overlays</span>
+
+              <label className="flex items-center justify-between cursor-pointer text-xs bg-white/70 p-2 rounded-lg border border-[#E2D6B5]">
+                <div>
+                  <div className="font-semibold text-slate-800">Engraved Compass Rose</div>
+                  <div className="text-[10px] text-slate-500">8-point ornate cardinal rose on map corner</div>
+                </div>
+                <input
+                  id="chk-grid-compass-rose"
+                  type="checkbox"
+                  checked={Boolean(gridConfig.showCompassRose)}
+                  onChange={(e) => onUpdateGridConfig({ showCompassRose: e.target.checked })}
+                  className="accent-amber-700 rounded w-4 h-4 cursor-pointer"
+                />
+              </label>
+
+              {gridConfig.showCompassRose && (
+                <div className="grid grid-cols-3 gap-1">
+                  {[
+                    { id: 'top-right', label: 'Top Right' },
+                    { id: 'bottom-right', label: 'Bottom Right' },
+                    { id: 'bottom-left', label: 'Bottom Left' },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => onUpdateGridConfig({ compassCorner: c.id as any })}
+                      className={`py-1 rounded text-[10px] font-semibold border cursor-pointer ${
+                        (gridConfig.compassCorner || 'top-right') === c.id
+                          ? 'bg-[#3E2723] text-amber-200 border-[#2D1B18]'
+                          : 'bg-white text-slate-700 border-[#E2D6B5]'
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <label className="flex items-center justify-between cursor-pointer text-xs bg-white/70 p-2 rounded-lg border border-[#E2D6B5]">
+                <div>
+                  <div className="font-semibold text-slate-800">Distance Scale Bar</div>
+                  <div className="text-[10px] text-slate-500">Segmented cartographic ruler in bottom-right</div>
+                </div>
+                <input
+                  id="chk-grid-scale-bar"
+                  type="checkbox"
+                  checked={Boolean(gridConfig.showScaleBar)}
+                  onChange={(e) => onUpdateGridConfig({ showScaleBar: e.target.checked })}
+                  className="accent-amber-700 rounded w-4 h-4 cursor-pointer"
+                />
+              </label>
+
+              {gridConfig.showScaleBar && (
+                <div className="grid grid-cols-2 gap-1.5 bg-white/60 p-2 rounded-lg border border-[#E2D6B5]">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] text-slate-600">Bar Span</span>
+                    <input
+                      type="number"
+                      min="10"
+                      max="5000"
+                      step="10"
+                      value={gridConfig.scaleBarDistance || 200}
+                      onChange={(e) => onUpdateGridConfig({ scaleBarDistance: Math.max(10, Number(e.target.value) || 200) })}
+                      className="px-2 py-1 rounded border border-[#E2D6B5] bg-white text-xs font-mono"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] text-slate-600">Unit</span>
+                    <select
+                      value={gridConfig.scaleBarUnit || 'miles'}
+                      onChange={(e) => onUpdateGridConfig({ scaleBarUnit: e.target.value as any })}
+                      className="px-2 py-1 rounded border border-[#E2D6B5] bg-white text-xs font-semibold cursor-pointer"
+                    >
+                      <option value="miles">Miles</option>
+                      <option value="leagues">Leagues</option>
+                      <option value="km">Kilometers</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <label className="flex items-center justify-between cursor-pointer text-xs bg-white/70 p-2 rounded-lg border border-[#E2D6B5]">
+                <div>
+                  <div className="font-semibold text-slate-800">Ornamental Atlas Frame</div>
+                  <div className="text-[10px] text-slate-500">Classic alternating degree frame around map</div>
+                </div>
+                <input
+                  id="chk-grid-map-border"
+                  type="checkbox"
+                  checked={Boolean(gridConfig.showMapBorder)}
+                  onChange={(e) => onUpdateGridConfig({ showMapBorder: e.target.checked })}
+                  className="accent-amber-700 rounded w-4 h-4 cursor-pointer"
+                />
+              </label>
+
+              <label className="flex items-center justify-between cursor-pointer text-xs bg-white/70 p-2 rounded-lg border border-[#E2D6B5]">
+                <div>
+                  <div className="font-semibold text-slate-800">Portolan Nautical Rhumb Lines</div>
+                  <div className="text-[10px] text-slate-500">16-point sea navigation ray network</div>
+                </div>
+                <input
+                  id="chk-grid-rhumb-lines"
+                  type="checkbox"
+                  checked={Boolean(gridConfig.showRhumbLines)}
+                  onChange={(e) => onUpdateGridConfig({ showRhumbLines: e.target.checked })}
+                  className="accent-amber-700 rounded w-4 h-4 cursor-pointer"
+                />
+              </label>
+
+              <label className="flex items-center justify-between cursor-pointer text-xs bg-white/70 p-2 rounded-lg border border-[#E2D6B5]">
+                <div>
+                  <div className="font-semibold text-slate-800">Margin Coordinates (A–Z / 1–20)</div>
+                  <div className="text-[10px] text-slate-500">Alphanumeric index along map borders</div>
+                </div>
+                <input
+                  id="chk-grid-coordinates"
+                  type="checkbox"
+                  checked={Boolean(gridConfig.showCoordinates)}
+                  onChange={(e) => onUpdateGridConfig({ showCoordinates: e.target.checked })}
+                  className="accent-amber-700 rounded w-4 h-4 cursor-pointer"
+                />
+              </label>
+            </div>
           </div>
         )}
       </div>
     </aside>
   );
-};
+});

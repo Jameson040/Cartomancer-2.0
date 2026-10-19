@@ -187,4 +187,17 @@ export const TEMPLATES: Record<string, { name: string; description: string; prev
       labels: [],
     },
   },
+  blank: {
+    name: 'Pristine Blank Canvas',
+    description: 'A completely clear, untouched parchment canvas with zero stamps, paths, or labels — ready for custom cartography.',
+    previewColor: '#e2d6b5',
+    project: {
+      name: 'New Uncharted Realm',
+      waterDeepColor: '#152d2c',
+      waterShallowColor: '#497e7c',
+      stamps: [],
+      paths: [],
+      labels: [],
+    },
+  },
 };

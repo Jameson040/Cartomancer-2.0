@@ -13,6 +13,10 @@ import {
 } from '../proceduralNoise';
 import { applySlopeLimitedDeposition } from '../elevationModel';
 import { NumericHeightField, paintHeight } from '../heightField';
+import { CanvasRenderer } from '../canvasRenderer';
+
+let dabScratchCanvas: HTMLCanvasElement | null = null;
+let dabScratchCtx: CanvasRenderingContext2D | null = null;
 
 function drawSoftMaskDab(
   ctx: CanvasRenderingContext2D,
@@ -25,11 +29,18 @@ function drawSoftMaskDab(
   carve: boolean
 ): void {
   const size = Math.ceil(radius * 2 + 4);
-  const dab = document.createElement('canvas');
-  dab.width = size;
-  dab.height = size;
-  const dabCtx = dab.getContext('2d');
+  if (!dabScratchCanvas) {
+    dabScratchCanvas = document.createElement('canvas');
+    dabScratchCtx = dabScratchCanvas.getContext('2d');
+  }
+  if (dabScratchCanvas.width < size || dabScratchCanvas.height < size) {
+    dabScratchCanvas.width = Math.max(size, 256);
+    dabScratchCanvas.height = Math.max(size, 256);
+  }
+  const dabCtx = dabScratchCtx;
   if (!dabCtx) return;
+  dabCtx.globalCompositeOperation = 'source-over';
+  dabCtx.clearRect(0, 0, size, size);
   dabCtx.save();
   dabCtx.translate(size / 2 - x, size / 2 - y);
   drawFractalDab(dabCtx, x, y, radius, roughness, '#ffffff', alpha);
@@ -44,7 +55,7 @@ function drawSoftMaskDab(
   dabCtx.fillRect(0, 0, size, size);
   ctx.save();
   ctx.globalCompositeOperation = carve ? 'destination-out' : 'source-over';
-  ctx.drawImage(dab, x - size / 2, y - size / 2);
+  ctx.drawImage(dabScratchCanvas, 0, 0, size, size, x - size / 2, y - size / 2, size, size);
   ctx.restore();
 }
 
@@ -143,13 +154,6 @@ export function paintBrushDab({
       }
     }
   } else if (activeTool === 'brush') {
-    const waterBiomeIds = new Set(['shallow_shallows', 'deep_ocean', 'river_water']);
-    const isWaterBiome = waterBiomeIds.has(selectedBiome || '');
-    const targetTextureCanvas = isWaterBiome ? waterTextureCanvas : textureCanvas;
-    if (!targetTextureCanvas) return;
-    const tCtx = targetTextureCanvas.getContext('2d');
-    if (!tCtx) return;
-
     const allBiomes = [...DEFAULT_BIOMES, ...customBiomes];
     const targetId = (selectedBiome || '').trim();
     const canonicalId = BIOME_ALIAS_MAP[targetId.toLowerCase()] || targetId;
@@ -160,114 +164,147 @@ export function paintBrushDab({
       allBiomes.find((b) => b.id === 'lush_grass') ||
       DEFAULT_BIOMES[0];
 
-    tCtx.save();
-    tCtx.globalCompositeOperation = 'source-over';
-    tCtx.globalAlpha = density * 0.45;
+    // Determine if the selected texture is water/sea based on detailType, ID, or name
+    const isSeaOrWaterBiome =
+      ['shallow_shallows', 'deep_ocean', 'river_water'].includes(biome.id) ||
+      biome.detailType === 'water' ||
+      /water|sea|ocean|lake|river|bay|lagoon|pond|reef/i.test(biome.id) ||
+      /water|sea|ocean|lake|river|bay|lagoon|pond|waves|abyss/i.test(biome.name);
 
-    // Check if this is a custom pattern shader
-    if (biome.isPattern && biome.patternImageUrl) {
-      let patImg =
-        imageManager.getImageByUrl(biome.patternImageUrl) ||
-        imageManager.getImageByUrl(biome.id);
+    // Target domain: 'auto' (detect by texture), 'land', 'water', or 'both'
+    const targetDomain = brushSettings.textureTargetDomain || 'auto';
+    const shouldPaintWater =
+      targetDomain === 'water' ||
+      targetDomain === 'both' ||
+      (targetDomain === 'auto' && isSeaOrWaterBiome);
 
-      if (!patImg) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          imageManager.cacheDirectImage(biome.patternImageUrl!, img);
-          imageManager.cacheDirectImage(biome.id, img);
-          onRequestRedraw?.();
-        };
-        img.src = biome.patternImageUrl;
-        if (img.complete && img.naturalWidth > 0) {
-          imageManager.cacheDirectImage(biome.patternImageUrl, img);
-          imageManager.cacheDirectImage(biome.id, img);
-          patImg = img;
+    const shouldPaintLand =
+      targetDomain === 'land' ||
+      targetDomain === 'both' ||
+      (targetDomain === 'auto' && !isSeaOrWaterBiome);
+
+    const targetContexts: CanvasRenderingContext2D[] = [];
+    if (shouldPaintWater && waterTextureCanvas) {
+      const wCtx = waterTextureCanvas.getContext('2d');
+      if (wCtx) targetContexts.push(wCtx);
+    }
+    if (shouldPaintLand && textureCanvas) {
+      const tCtx = textureCanvas.getContext('2d');
+      if (tCtx) targetContexts.push(tCtx);
+    }
+
+    if (targetContexts.length === 0) return;
+
+    for (const tCtx of targetContexts) {
+      tCtx.save();
+      tCtx.globalCompositeOperation = 'source-over';
+      tCtx.globalAlpha = density * 0.45;
+
+      // Check if this is a custom pattern shader
+      if (biome.isPattern && biome.patternImageUrl) {
+        let patImg =
+          imageManager.getImageByUrl(biome.patternImageUrl) ||
+          imageManager.getImageByUrl(biome.id);
+
+        if (!patImg) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            imageManager.cacheDirectImage(biome.patternImageUrl!, img);
+            imageManager.cacheDirectImage(biome.id, img);
+            onRequestRedraw?.();
+          };
+          img.src = biome.patternImageUrl;
+          if (img.complete && img.naturalWidth > 0) {
+            imageManager.cacheDirectImage(biome.patternImageUrl, img);
+            imageManager.cacheDirectImage(biome.id, img);
+            patImg = img;
+          }
         }
-      }
 
-      if (patImg && patImg.complete && patImg.naturalWidth > 0) {
-        const scale = Math.max(16, Math.min(256, biome.patternScale || 48));
-        const tile = getScaledPatternTile(patImg, biome.id || biome.patternImageUrl, scale);
-        const pattern = tCtx.createPattern(tile, 'repeat');
-        if (pattern) {
-          const r = Math.ceil(size);
-          const dSize = r * 2;
-          const dab = document.createElement('canvas');
-          dab.width = dSize;
-          dab.height = dSize;
-          const dCtx = dab.getContext('2d');
-          if (dCtx) {
-            // 1. Tile pattern aligned to world coordinates so overlapping dabs tile seamlessly
-            dCtx.save();
-            const offsetX = ((x - r) % scale + scale) % scale;
-            const offsetY = ((y - r) % scale + scale) % scale;
-            dCtx.translate(-offsetX, -offsetY);
-            dCtx.fillStyle = pattern;
-            dCtx.fillRect(offsetX, offsetY, dSize, dSize);
-            dCtx.restore();
+        if (patImg && patImg.complete && patImg.naturalWidth > 0) {
+          const scale = Math.max(16, Math.min(256, biome.patternScale || 48));
+          const tile = getScaledPatternTile(patImg, biome.id || biome.patternImageUrl, scale);
+          const pattern = tCtx.createPattern(tile, 'repeat');
+          if (pattern) {
+            const r = Math.ceil(size);
+            const dSize = r * 2;
+            const dab = document.createElement('canvas');
+            dab.width = dSize;
+            dab.height = dSize;
+            const dCtx = dab.getContext('2d');
+            if (dCtx) {
+              // 1. Tile pattern aligned to world coordinates so overlapping dabs tile seamlessly
+              dCtx.save();
+              const offsetX = ((x - r) % scale + scale) % scale;
+              const offsetY = ((y - r) % scale + scale) % scale;
+              dCtx.translate(-offsetX, -offsetY);
+              dCtx.fillStyle = pattern;
+              dCtx.fillRect(offsetX, offsetY, dSize, dSize);
+              dCtx.restore();
 
-            // 2. Feather dab boundary according to brush softness
-            dCtx.globalCompositeOperation = 'destination-in';
-            const grad = dCtx.createRadialGradient(r, r, r * (1 - softness) * 0.4, r, r, r);
-            grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
-            grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-            dCtx.fillStyle = grad;
-            dCtx.beginPath();
-            dCtx.arc(r, r, r, 0, Math.PI * 2);
-            dCtx.fill();
+              // 2. Feather dab boundary according to brush softness
+              dCtx.globalCompositeOperation = 'destination-in';
+              const grad = dCtx.createRadialGradient(r, r, r * (1 - softness) * 0.4, r, r, r);
+              grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+              grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+              dCtx.fillStyle = grad;
+              dCtx.beginPath();
+              dCtx.arc(r, r, r, 0, Math.PI * 2);
+              dCtx.fill();
 
-            // 3. Composite onto texture canvas with density
-            tCtx.globalAlpha = density * 0.7;
-            tCtx.drawImage(dab, x - r, y - r);
-            tCtx.restore();
-            return;
+              // 3. Composite onto texture canvas with density
+              tCtx.globalAlpha = density * 0.7;
+              tCtx.drawImage(dab, x - r, y - r);
+              tCtx.restore();
+              continue;
+            }
           }
         }
       }
-    }
 
-    // Dual-tone color jitter for organic vegetation shifts
-    let finalColor = brushSettings.brushColorOverride || biome.color;
-    if (
-      (finalColor === '#6b7280' || finalColor === '#6B7280') &&
-      (/grass|green|meadow|lawn|pasture|field|forest/i.test(biome.name) || biome.detailType === 'grass')
-    ) {
-      finalColor = '#4d8036';
-    }
-
-    if (brushSettings.colorJitter && brushSettings.colorJitter > 0) {
-      finalColor = applyColorJitter(finalColor, brushSettings.colorJitter);
-    }
-
-    // Dry brush stippling mode
-    if (brushSettings.stippleMode) {
-      const numStipples = Math.round(size * 0.6 * density);
-      tCtx.fillStyle = finalColor;
-      for (let s = 0; s < numStipples; s++) {
-        const angle = Math.random() * Math.PI * 2;
-        const r = Math.sqrt(Math.random()) * size;
-        const px = x + Math.cos(angle) * r;
-        const py = y + Math.sin(angle) * r;
-        tCtx.beginPath();
-        tCtx.arc(px, py, 1.2, 0, Math.PI * 2);
-        tCtx.fill();
+      // Dual-tone color jitter for organic shifts
+      let finalColor = brushSettings.brushColorOverride || biome.color;
+      if (
+        (finalColor === '#6b7280' || finalColor === '#6B7280') &&
+        (/grass|green|meadow|lawn|pasture|field|forest/i.test(biome.name) || biome.detailType === 'grass')
+      ) {
+        finalColor = '#4d8036';
       }
+
+      if (brushSettings.colorJitter && brushSettings.colorJitter > 0) {
+        finalColor = applyColorJitter(finalColor, brushSettings.colorJitter);
+      }
+
+      // Dry brush stippling mode
+      if (brushSettings.stippleMode) {
+        const numStipples = Math.round(size * 0.6 * density);
+        tCtx.fillStyle = finalColor;
+        for (let s = 0; s < numStipples; s++) {
+          const angle = Math.random() * Math.PI * 2;
+          const r = Math.sqrt(Math.random()) * size;
+          const px = x + Math.cos(angle) * r;
+          const py = y + Math.sin(angle) * r;
+          tCtx.beginPath();
+          tCtx.arc(px, py, 1.2, 0, Math.PI * 2);
+          tCtx.fill();
+        }
+        tCtx.restore();
+        continue;
+      }
+
+      // Smooth color blending with matching zero-alpha outer ring
+      const outerColor = hexToRgba(finalColor, 0);
+      const grad = tCtx.createRadialGradient(x, y, size * (1 - softness) * 0.4, x, y, size);
+      grad.addColorStop(0, finalColor);
+      grad.addColorStop(1, outerColor);
+
+      tCtx.fillStyle = grad;
+      tCtx.beginPath();
+      tCtx.arc(x, y, size, 0, Math.PI * 2);
+      tCtx.fill();
       tCtx.restore();
-      return;
     }
-
-    // Smooth color blending with matching zero-alpha outer ring
-    const outerColor = hexToRgba(finalColor, 0);
-    const grad = tCtx.createRadialGradient(x, y, size * (1 - softness) * 0.4, x, y, size);
-    grad.addColorStop(0, finalColor);
-    grad.addColorStop(1, outerColor);
-
-    tCtx.fillStyle = grad;
-    tCtx.beginPath();
-    tCtx.arc(x, y, size, 0, Math.PI * 2);
-    tCtx.fill();
-    tCtx.restore();
   } else if (activeTool === 'elevation') {
     if (heightField) {
       const mode = brushSettings.elevationMode ?? 'raise';
@@ -331,6 +368,13 @@ export function paintBrushDab({
       eCtx.fill();
       eCtx.restore();
     }
+    CanvasRenderer.invalidateTerrainCache('relief');
+  }
+
+  if (activeTool === 'mask') {
+    CanvasRenderer.invalidateTerrainCache('all');
+  } else if (activeTool === 'brush') {
+    CanvasRenderer.invalidateTerrainCache('textures');
   }
 }
 

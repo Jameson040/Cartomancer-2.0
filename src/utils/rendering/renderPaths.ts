@@ -256,6 +256,9 @@ export function renderPaths(
   }
 }
 
+let pathMaskScratchCanvas: HTMLCanvasElement | null = null;
+let pathMaskScratchCtx: CanvasRenderingContext2D | null = null;
+
 export function renderPathsMasked(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -281,11 +284,18 @@ export function renderPathsMasked(
   const draftIsLand = !activeDraft || activeDraft.restrictToLand !== false;
 
   if (landPaths.length > 0 || (activeDraft && draftIsLand)) {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = width;
-    tempCanvas.height = height;
-    const tCtx = tempCanvas.getContext('2d');
+    if (!pathMaskScratchCanvas) {
+      pathMaskScratchCanvas = document.createElement('canvas');
+      pathMaskScratchCtx = pathMaskScratchCanvas.getContext('2d');
+    }
+    if (pathMaskScratchCanvas.width !== width || pathMaskScratchCanvas.height !== height) {
+      pathMaskScratchCanvas.width = width;
+      pathMaskScratchCanvas.height = height;
+    }
+    const tCtx = pathMaskScratchCtx;
     if (tCtx) {
+      tCtx.globalCompositeOperation = 'source-over';
+      tCtx.clearRect(0, 0, width, height);
       renderPaths(
         tCtx,
         landPaths,
@@ -295,7 +305,7 @@ export function renderPathsMasked(
       );
       tCtx.globalCompositeOperation = 'destination-in';
       tCtx.drawImage(maskCanvas, 0, 0, width, height);
-      ctx.drawImage(tempCanvas, 0, 0, width, height);
+      ctx.drawImage(pathMaskScratchCanvas, 0, 0, width, height);
     }
   }
 

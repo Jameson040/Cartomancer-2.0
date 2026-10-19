@@ -17,6 +17,7 @@ import {
   PathStyle,
   PlacedPath,
   PlacedStamp,
+  PlacedTerritory,
   PlacedText,
   ReferenceMapConfig,
   ImportedMapLayer,
@@ -34,6 +35,7 @@ import { AutosavePayload, AutosaveRecord } from './utils/projectAutosave';
 import { createProjectFile, CURRENT_PROJECT_VERSION, normalizeProjectFile } from './utils/projectFormat';
 import { ParchmentFilterOptions } from './utils/cannyEdgeFilter';
 import { CanvasRenderer } from './utils/canvasRenderer';
+import { isPointInPolygon } from './utils/rendering/renderTerritories';
 import {
   DEFAULT_WORLD_ELEVATION,
   deriveTopographyFromDrawnMap,
@@ -46,7 +48,8 @@ import { simulateHydraulicErosion } from './utils/proceduralNoise';
 import { createHeightField, NumericHeightField, serializeHeightField, deserializeHeightField, sampleHeight, encodeHeight } from './utils/heightField';
 
 import { paintBrushDab, paintStroke } from './utils/painting/strokePainter';
-import { fillContiguousRegion } from './utils/painting/regionFill';
+import { useLandmassShapes } from './hooks/useLandmassShapes';
+import { LandmassShape } from './types';
 import { isPointInStamp, getStampHitHandle, isPointInLabel, isPointNearPath, getStampsFrontToBack } from './utils/hitTesting';
 
 // Custom Domain Hooks
@@ -55,6 +58,7 @@ import { useViewport } from './hooks/useViewport';
 import { useMapHistory } from './hooks/useMapHistory';
 import { useStampManager } from './hooks/useStampManager';
 import { usePathManager } from './hooks/usePathManager';
+import { useTerritoryManager } from './hooks/useTerritoryManager';
 import { useLabelManager } from './hooks/useLabelManager';
 import { useTransformManager } from './hooks/useTransformManager';
 import { useEraser } from './hooks/useEraser';
@@ -73,8 +77,12 @@ import { HelpShortcutsModal } from './components/HelpShortcutsModal';
 import { ShaderLabModal } from './components/ShaderLabModal';
 import { MapImportModal } from './components/MapImportModal';
 import { AssetOutlinerModal } from './components/AssetOutlinerModal';
+import { CanvasContextBar } from './components/CanvasContextBar';
+import { CanvasContextMenu } from './components/CanvasContextMenu';
+import { MinimapNavigator } from './components/MinimapNavigator';
+import { WorldAdvisorModal } from './components/WorldAdvisorModal';
 
-const DEFAULT_DIMENSIONS: CanvasDimensions = { width: 1400, height: 900 };
+const DEFAULT_DIMENSIONS: CanvasDimensions = { width: 2200, height: 1400 };
 
 const safeProjectFilename = (name: string): string =>
   name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'cartomancer_map';
@@ -82,13 +90,13 @@ const safeProjectFilename = (name: string): string =>
 export default function App() {
   // --- Project Configuration ---
   const [projectName, setProjectName] = useState('Realm of Eldoria');
-  const [dimensions] = useState<CanvasDimensions>(DEFAULT_DIMENSIONS);
+  const [dimensions, setDimensions] = useState<CanvasDimensions>(DEFAULT_DIMENSIONS);
   const [waterDeepColor, setWaterDeepColor] = useState('#1a365d');
   const [waterShallowColor, setWaterShallowColor] = useState('#2b6cb0');
   const [topographicalView, setTopographicalView] = useState(false);
   const [elevationConfig, setElevationConfig] = useState<WorldElevationConfig>(DEFAULT_WORLD_ELEVATION);
 
-  // --- Tactical Grid & Atmosphere ---
+  // --- Tactical Grid, Compass Rose, Scale Bar & Atmosphere ---
   const [gridConfig, setGridConfig] = useState<GridConfig>({
     type: 'none',
     size: 48,
@@ -96,6 +104,12 @@ export default function App() {
     opacity: 0.25,
     lineWidth: 1.5,
     labels: false,
+    showCompassRose: true,
+    compassCorner: 'top-right',
+    showScaleBar: true,
+    scaleBarDistance: 200,
+    scaleBarUnit: 'miles',
+    showMapBorder: false,
   });
 
   const [atmosphere, setAtmosphere] = useState<AtmosphereFilter>({
@@ -124,6 +138,7 @@ export default function App() {
     elevation: 20,
     maskMode: 'add_land',
     selectedBiome: 'lush_grass',
+    textureTargetDomain: 'auto',
     coastlineRipples: 2,
     coastlineColor: '#6ee7b7',
     roughness: 0.6,
@@ -143,9 +158,18 @@ export default function App() {
     autoYDepthSort: true,
     stampLayer: 1,
     eraserTarget: 'all',
+    stampEraserDensity: 100,
     pathRestrictToLand: true,
     pathAutoMerge: true,
     pathTextureId: 'river_water',
+    territoryFillColor: '#f59e0b',
+    territoryFillOpacity: 0.18,
+    territoryBorderColor: '#b45309',
+    territoryBorderWidth: 3,
+    territoryBorderStyle: 'dashed',
+    territoryInnerGlowWidth: 22,
+    territoryInnerGlowOpacity: 0.35,
+    territoryName: 'Kingdom of Eldoria',
   });
 
   // Path Tool specific
@@ -200,9 +224,14 @@ export default function App() {
   const [isShaderLabOpen, setIsShaderLabOpen] = useState(false);
   const [isMapImportOpen, setIsMapImportOpen] = useState(false);
   const [isAssetOutlinerOpen, setIsAssetOutlinerOpen] = useState(false);
+  const [isWorldAdvisorOpen, setIsWorldAdvisorOpen] = useState(false);
+  const [minimapTick, setMinimapTick] = useState(0);
 
-  // Canvas Refs
+  // Canvas & Fast DOM Refs
   const viewportRef = useRef<HTMLDivElement>(null);
+  const mapStageRef = useRef<HTMLDivElement>(null);
+  const brushPreviewRef = useRef<HTMLDivElement>(null);
+  const hudCoordsRef = useRef<HTMLSpanElement>(null);
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const textureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -239,15 +268,21 @@ export default function App() {
   const stampsRef = useRef<PlacedStamp[]>([]);
   const pathsRef = useRef<PlacedPath[]>([]);
   const labelsRef = useRef<PlacedText[]>([]);
+  const territoriesRef = useRef<PlacedTerritory[]>([]);
   const selectedStampIdRef = useRef<string | null>(null);
   const selectedPathIdRef = useRef<string | null>(null);
   const selectedLabelIdRef = useRef<string | null>(null);
+  const selectedTerritoryIdRef = useRef<string | null>(null);
   const [selectedStampIds, setSelectedStampIds] = useState<string[]>([]);
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
-  const [polygonSelection, setPolygonSelection] = useState<{ x: number; y: number }[]>([]);
+  const [isEyedropperActive, setIsEyedropperActive] = useState<boolean>(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const marqueeRef = useRef<typeof marquee>(null);
   const activePathDraftRef = useRef<any | null>(null);
+  const territoryVerticesRef = useRef<{ x: number; y: number }[]>([]);
+  const cursorPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const pathNodeDragRef = useRef<{ pathId: string; pointIndex: number; moved: boolean } | null>(null);
+  const landmassShapes = useLandmassShapes();
 
   // --- Redraw Coordinator ---
   const requestRedraw = useCallback(
@@ -255,6 +290,7 @@ export default function App() {
       stamps?: PlacedStamp[];
       paths?: PlacedPath[];
       labels?: PlacedText[];
+      territories?: PlacedTerritory[];
       layers?: LayerGroupState;
       atmosphere?: AtmosphereFilter;
       topographicalView?: boolean;
@@ -292,6 +328,7 @@ export default function App() {
         stamps: stampsToRender,
         paths: explicitOverrides?.paths ?? pathsRef.current,
         labels: explicitOverrides?.labels ?? labelsRef.current,
+        territories: explicitOverrides?.territories ?? territoriesRef.current,
         customAssets,
         layers: activeLayers,
         grid: gridConfig,
@@ -310,7 +347,17 @@ export default function App() {
         selectedStampIds: isStampsActive() ? selectedStampIds : [],
         selectedLabelId: isLabelsActive() ? selectedLabelIdRef.current : null,
         selectedPathId: isPathsActive() ? selectedPathIdRef.current : null,
+        selectedTerritoryId: isPathsActive() ? selectedTerritoryIdRef.current : null,
         activePathDraft: activePathDraftRef.current,
+        activeTerritoryDraft:
+          activeTool === 'territory' && territoryVerticesRef.current.length > 0
+            ? {
+                points: territoryVerticesRef.current,
+                cursorPos: cursorPosRef.current,
+                fillColor: brushSettings.territoryFillColor || '#f59e0b',
+                borderColor: brushSettings.territoryBorderColor || '#b45309',
+              }
+            : null,
         referenceMap,
         importedMapLayer,
       });
@@ -330,6 +377,8 @@ export default function App() {
       brushSettings.autoBeaching,
       brushSettings.showContourLines,
       brushSettings.contourInterval,
+      brushSettings.territoryFillColor,
+      brushSettings.territoryBorderColor,
       elevationConfig,
       topographicalView,
       numericHeightfieldEnabled,
@@ -338,13 +387,89 @@ export default function App() {
       selectedStampIds,
       isLabelsActive,
       isPathsActive,
+      activeTool,
       referenceMap,
       importedMapLayer,
       stampCategoryVisibility,
     ]
   );
 
-  // --- 2. Viewport Hook ---
+  // --- 2. Viewport Hook (with Alt+Wheel & Shift+Wheel Canvas Hotkeys) ---
+  const handleModifierWheel = useCallback(
+    (e: WheelEvent): boolean => {
+      const stepDir = e.deltaY < 0 ? 1 : -1;
+      if (e.altKey) {
+        // Alt + Wheel: Resize selected stamp/label, or resize active stamp/brush
+        if (activeTool === 'select' && selectedStampIdRef.current) {
+          const cur = stampsRef.current.find((s) => s.id === selectedStampIdRef.current);
+          if (cur && !cur.locked) {
+            const nextScale = Math.max(0.15, Math.min(5.0, Number(((cur.scale ?? 1.0) + stepDir * 0.08).toFixed(2))));
+            const targetIds = selectedStampIds.length > 1 ? new Set(selectedStampIds) : new Set([cur.id]);
+            const updated = stampsRef.current.map((s) =>
+              targetIds.has(s.id) && !s.locked ? { ...s, scale: nextScale } : s
+            );
+            stampsRef.current = updated;
+            setStamps(updated);
+            requestRedraw({ stamps: updated });
+            return true;
+          }
+        }
+        if (activeTool === 'stamp') {
+          setBrushSettings((prev) => ({
+            ...prev,
+            stampScale: Math.max(0.15, Math.min(5.0, Number(((prev.stampScale ?? 1.0) + stepDir * 0.08).toFixed(2)))),
+          }));
+          return true;
+        }
+        if (['mask', 'brush', 'elevation', 'eraser'].includes(activeTool)) {
+          setBrushSettings((prev) => ({
+            ...prev,
+            size: Math.max(8, Math.min(200, Math.round((prev.size ?? 40) + stepDir * 6))),
+          }));
+          return true;
+        }
+      }
+
+      if (e.shiftKey) {
+        // Shift + Wheel: Rotate selected stamp/label, or rotate active stamp brush
+        if (activeTool === 'select' && selectedStampIdRef.current) {
+          const cur = stampsRef.current.find((s) => s.id === selectedStampIdRef.current);
+          if (cur && !cur.locked) {
+            const nextRot = ((cur.rotation ?? 0) + stepDir * 10 + 360) % 360;
+            const targetIds = selectedStampIds.length > 1 ? new Set(selectedStampIds) : new Set([cur.id]);
+            const updated = stampsRef.current.map((s) =>
+              targetIds.has(s.id) && !s.locked ? { ...s, rotation: nextRot } : s
+            );
+            stampsRef.current = updated;
+            setStamps(updated);
+            requestRedraw({ stamps: updated });
+            return true;
+          }
+        }
+        if (activeTool === 'select' && selectedLabelIdRef.current) {
+          const cur = labelsRef.current.find((l) => l.id === selectedLabelIdRef.current);
+          if (cur) {
+            const nextRot = ((cur.rotation ?? 0) + stepDir * 5 + 360) % 360;
+            const updated = labelsRef.current.map((l) => (l.id === cur.id ? { ...l, rotation: nextRot } : l));
+            labelsRef.current = updated;
+            setLabels(updated);
+            requestRedraw({ labels: updated });
+            return true;
+          }
+        }
+        if (activeTool === 'stamp') {
+          setBrushSettings((prev) => ({
+            ...prev,
+            stampRotation: (((prev.stampRotation ?? 0) + stepDir * 10 + 180) % 360) - 180,
+          }));
+          return true;
+        }
+      }
+      return false;
+    },
+    [activeTool, selectedStampIds, requestRedraw]
+  );
+
   const {
     zoom,
     setZoom,
@@ -363,7 +488,13 @@ export default function App() {
     zoomOut,
     resetZoom,
     fitToScreen,
-  } = useViewport({ dimensions, mainCanvasRef, viewportRef });
+  } = useViewport({
+    dimensions,
+    mainCanvasRef,
+    viewportRef,
+    mapStageRef,
+    onModifierWheel: handleModifierWheel,
+  });
 
   // --- 3. Map History Hook ---
   const {
@@ -382,9 +513,11 @@ export default function App() {
     stampsRef,
     pathsRef,
     labelsRef,
+    territoriesRef,
     setStamps: (s) => setStamps(s),
     setPaths: (p) => setPaths(p),
     setLabels: (l) => setLabels(l),
+    setTerritories: (t) => setTerritories(t),
     requestRedraw,
   });
 
@@ -402,11 +535,20 @@ export default function App() {
     handleDuplicateSelectedStamp,
     handleBringStampToFront,
     handleSendStampToBack,
+    handleToggleLockSelectedStamp,
+    handleGroupSelectedStamps,
+    handleUngroupSelectedStamps,
+    handleCopyStampStyle,
+    handlePasteStampStyle,
+    stampStyleClipboard,
   } = useStampManager({
     pushHistorySnapshot,
     requestRedraw,
     isStampsActive,
+    selectedStampIds,
+    setSelectedStampIds,
   });
+  const hasStampStyleClipboard = Boolean(stampStyleClipboard);
   stampsRef.current = stamps;
   selectedStampIdRef.current = selectedStampId;
 
@@ -431,6 +573,29 @@ export default function App() {
   pathsRef.current = paths;
   selectedPathIdRef.current = selectedPathId;
   activePathDraftRef.current = activePathDraft;
+
+  // --- 5B. Territory Manager Hook ---
+  const {
+    territories,
+    territoriesRef: territoryRefHook,
+    setTerritories,
+    selectedTerritoryId,
+    setSelectedTerritoryId,
+    territoryVertices,
+    addTerritoryVertex,
+    undoTerritoryVertex: removeLastTerritoryVertex,
+    cancelTerritoryDraft,
+    commitTerritory: commitTerritoryPolygon,
+    handleUpdateSelectedTerritory,
+    handleDeleteSelectedTerritory,
+    handleDuplicateSelectedTerritory,
+  } = useTerritoryManager({
+    pushHistorySnapshot,
+    requestRedraw: (overrides) => requestRedraw(overrides),
+  });
+  territoriesRef.current = territories;
+  selectedTerritoryIdRef.current = selectedTerritoryId;
+  territoryVerticesRef.current = territoryVertices;
 
   // --- 6. Label Manager Hook ---
   const {
@@ -482,15 +647,19 @@ export default function App() {
     stampsRef,
     pathsRef,
     labelsRef,
+    territoriesRef,
     setStamps,
     setPaths,
     setLabels,
+    setTerritories,
     selectedStampId,
     selectedPathId,
     selectedLabelId,
+    selectedTerritoryId,
     setSelectedStampId,
     setSelectedPathId,
     setSelectedLabelId,
+    setSelectedTerritoryId,
     isStampsActive,
     isPathsActive,
     isLabelsActive,
@@ -716,12 +885,23 @@ export default function App() {
 
   // --- Template Loader ---
   const applyTemplate = (templateKey: string, pushHistory = true) => {
-    const tmpl = TEMPLATES[templateKey];
+    const key = templateKey === 'blank' ? 'blank_canvas' : templateKey;
+    const tmpl = TEMPLATES[key];
     if (!tmpl) return;
 
     if (tmpl.project.name) setProjectName(tmpl.project.name);
     if (tmpl.project.waterDeepColor) setWaterDeepColor(tmpl.project.waterDeepColor);
     if (tmpl.project.waterShallowColor) setWaterShallowColor(tmpl.project.waterShallowColor);
+
+    setSelectedStampId(null);
+    setSelectedStampIds([]);
+    setSelectedLabelId(null);
+    setSelectedPathId(null);
+    setActivePathDraft(null);
+
+    if (heightFieldRef.current) {
+      heightFieldRef.current = createHeightField(dimensions.width, dimensions.height, 4, 0);
+    }
 
     let newStamps = tmpl.project.stamps ? tmpl.project.stamps.map((s) => ({ ...s })) : [];
     let newPaths = tmpl.project.paths ? tmpl.project.paths.map((p) => ({ ...p, points: [...p.points] })) : [];
@@ -784,6 +964,40 @@ export default function App() {
       newLabels = demoLabels;
     }
 
+    const mask = maskCanvasRef.current;
+    const texture = textureCanvasRef.current;
+    const waterTexture = waterTextureCanvasRef.current;
+    const elevation = elevationCanvasRef.current;
+    if (!mask || !texture || !waterTexture || !elevation) return;
+
+    // Proportionally scale 1400x900 template coordinates to current canvas dimensions
+    const sx = mask.width / 1400;
+    const sy = mask.height / 900;
+    const sAvg = Math.sqrt(sx * sy);
+
+    if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01) {
+      newStamps = newStamps.map((s) => ({
+        ...s,
+        x: Math.round(s.x * sx),
+        y: Math.round(s.y * sy),
+        scale: +(s.scale * sAvg).toFixed(2),
+      }));
+      newPaths = newPaths.map((p) => ({
+        ...p,
+        width: Math.max(2, Math.round(p.width * sAvg)),
+        points: p.points.map((pt) => ({
+          x: Math.round(pt.x * sx),
+          y: Math.round(pt.y * sy),
+        })),
+      }));
+      newLabels = newLabels.map((l) => ({
+        ...l,
+        x: Math.round(l.x * sx),
+        y: Math.round(l.y * sy),
+        fontSize: Math.round(l.fontSize * sAvg),
+      }));
+    }
+
     stampsRef.current = newStamps;
     pathsRef.current = newPaths;
     labelsRef.current = newLabels;
@@ -791,12 +1005,6 @@ export default function App() {
     setStamps(newStamps);
     setPaths(newPaths);
     setLabels(newLabels);
-
-    const mask = maskCanvasRef.current;
-    const texture = textureCanvasRef.current;
-    const waterTexture = waterTextureCanvasRef.current;
-    const elevation = elevationCanvasRef.current;
-    if (!mask || !texture || !waterTexture || !elevation) return;
 
     const mCtx = mask.getContext('2d')!;
     const tCtx = texture.getContext('2d')!;
@@ -809,6 +1017,8 @@ export default function App() {
     eCtx.clearRect(0, 0, elevation.width, elevation.height);
 
     if (templateKey === 'mythic_realm') {
+      mCtx.save();
+      mCtx.scale(sx, sy);
       mCtx.fillStyle = '#ffffff';
       mCtx.beginPath();
       mCtx.ellipse(460, 480, 320, 240, -0.08, 0, Math.PI * 2);
@@ -832,12 +1042,15 @@ export default function App() {
       mCtx.ellipse(140, 420, 80, 50, 0.4, 0, Math.PI * 2);
       mCtx.ellipse(180, 300, 60, 40, -0.2, 0, Math.PI * 2);
       mCtx.fill();
+      mCtx.restore();
 
+      tCtx.save();
+      tCtx.scale(sx, sy);
       tCtx.fillStyle = '#e8f2f8';
-      tCtx.fillRect(0, 0, texture.width, 240);
+      tCtx.fillRect(0, 0, 1400, 240);
 
       tCtx.fillStyle = '#4a7c3a';
-      tCtx.fillRect(0, 240, 750, texture.height - 240);
+      tCtx.fillRect(0, 240, 750, 900 - 240);
 
       tCtx.fillStyle = '#264a25';
       tCtx.beginPath();
@@ -845,8 +1058,11 @@ export default function App() {
       tCtx.fill();
 
       tCtx.fillStyle = '#d4a259';
-      tCtx.fillRect(750, 240, texture.width - 750, texture.height - 240);
+      tCtx.fillRect(750, 240, 1400 - 750, 900 - 240);
+      tCtx.restore();
 
+      eCtx.save();
+      eCtx.scale(sx, sy);
       eCtx.fillStyle = '#808080';
       eCtx.beginPath();
       eCtx.ellipse(430, 360, 180, 60, -0.1, 0, Math.PI * 2);
@@ -854,7 +1070,10 @@ export default function App() {
       eCtx.beginPath();
       eCtx.ellipse(780, 480, 120, 50, 0.3, 0, Math.PI * 2);
       eCtx.fill();
+      eCtx.restore();
     }
+
+    CanvasRenderer.invalidateTerrainCache('all');
 
     if (pushHistory) {
       pushHistorySnapshot(`Load ${tmpl.name}`, { stamps: newStamps, paths: newPaths, labels: newLabels });
@@ -863,15 +1082,125 @@ export default function App() {
     }
 
     requestRedraw();
+    setMinimapTick((t) => t + 1);
   };
 
-  // --- Terrain Tools (Erosion, Topography, Map Outline Import) ---
+  // --- Non-Destructive Canvas Resolution Resizer ---
+  const handleResizeCanvas = useCallback(
+    (newWidth: number, newHeight: number) => {
+      if (newWidth === dimensions.width && newHeight === dimensions.height) return;
+
+      const oldW = dimensions.width;
+      const oldH = dimensions.height;
+      const sx = newWidth / oldW;
+      const sy = newHeight / oldH;
+      const sAvg = Math.sqrt(sx * sy);
+
+      const scaleOffscreenCanvas = (canvas: HTMLCanvasElement | null) => {
+        if (!canvas) return;
+        const tmp = document.createElement('canvas');
+        tmp.width = oldW;
+        tmp.height = oldH;
+        const tmpCtx = tmp.getContext('2d');
+        if (tmpCtx) {
+          tmpCtx.drawImage(canvas, 0, 0);
+        }
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx && tmpCtx) {
+          ctx.clearRect(0, 0, newWidth, newHeight);
+          ctx.drawImage(tmp, 0, 0, oldW, oldH, 0, 0, newWidth, newHeight);
+        }
+      };
+
+      scaleOffscreenCanvas(maskCanvasRef.current);
+      scaleOffscreenCanvas(textureCanvasRef.current);
+      scaleOffscreenCanvas(waterTextureCanvasRef.current);
+      scaleOffscreenCanvas(elevationCanvasRef.current);
+
+      if (mainCanvasRef.current) {
+        mainCanvasRef.current.width = newWidth;
+        mainCanvasRef.current.height = newHeight;
+      }
+
+      if (heightFieldRef.current) {
+        heightFieldRef.current = createHeightField(newWidth, newHeight, 4, 0);
+      }
+
+      const scaledStamps = stampsRef.current.map((s) => ({
+        ...s,
+        x: Math.round(s.x * sx),
+        y: Math.round(s.y * sy),
+        scale: +(s.scale * sAvg).toFixed(2),
+      }));
+
+      const scaledPaths = pathsRef.current.map((p) => ({
+        ...p,
+        width: Math.max(2, Math.round(p.width * sAvg)),
+        points: p.points.map((pt) => ({
+          x: Math.round(pt.x * sx),
+          y: Math.round(pt.y * sy),
+        })),
+      }));
+
+      const scaledTerritories = territoriesRef.current.map((t) => ({
+        ...t,
+        points: t.points.map((pt) => ({
+          x: Math.round(pt.x * sx),
+          y: Math.round(pt.y * sy),
+        })),
+      }));
+
+      const scaledLabels = labelsRef.current.map((l) => ({
+        ...l,
+        x: Math.round(l.x * sx),
+        y: Math.round(l.y * sy),
+        fontSize: Math.max(10, Math.round(l.fontSize * sAvg)),
+      }));
+
+      stampsRef.current = scaledStamps;
+      pathsRef.current = scaledPaths;
+      territoriesRef.current = scaledTerritories;
+      labelsRef.current = scaledLabels;
+
+      setStamps(scaledStamps);
+      setPaths(scaledPaths);
+      setTerritories(scaledTerritories);
+      setLabels(scaledLabels);
+      setDimensions({ width: newWidth, height: newHeight });
+
+      CanvasRenderer.invalidateTerrainCache('all');
+      resetHistory();
+      setTimeout(() => {
+        pushHistorySnapshot(`Resize Canvas to ${newWidth}×${newHeight}`, {
+          stamps: scaledStamps,
+          paths: scaledPaths,
+          labels: scaledLabels,
+          territories: scaledTerritories,
+        });
+        fitToScreen(undefined, undefined, { width: newWidth, height: newHeight });
+        requestRedraw({
+          stamps: scaledStamps,
+          paths: scaledPaths,
+          labels: scaledLabels,
+          territories: scaledTerritories,
+        });
+        setMinimapTick((t) => t + 1);
+      }, 0);
+    },
+    [dimensions, fitToScreen, pushHistorySnapshot, requestRedraw, resetHistory, setLabels, setPaths, setStamps, setTerritories]
+  );
+
+  // --- Terrain Tools (Erosion, Topography, Procedural World & River Basin) ---
   const handleHydraulicErosion = useCallback(() => {
     const elev = elevationCanvasRef.current;
     if (!elev) return;
     simulateHydraulicErosion(elev, 5000, 0.6);
+    CanvasRenderer.invalidateTerrainCache('relief');
     pushHistorySnapshot('Simulate Hydraulic Erosion');
     requestRedraw();
+    setMinimapTick((t) => t + 1);
   }, [pushHistorySnapshot, requestRedraw]);
 
   const handleDeriveTopography = useCallback(() => {
@@ -943,13 +1272,238 @@ export default function App() {
     setStamps(nextStamps);
     setPaths(nextPaths);
     setLabels(nextLabels);
+    CanvasRenderer.invalidateTerrainCache('all');
     pushHistorySnapshot('Generate Terrain, Rivers & Settlements', {
       stamps: nextStamps,
       paths: nextPaths,
       labels: nextLabels,
     });
     requestRedraw({ stamps: nextStamps, paths: nextPaths, labels: nextLabels });
+    setMinimapTick((t) => t + 1);
   }, [elevationConfig, pushHistorySnapshot, requestRedraw, setLabels, setPaths, setStamps]);
+
+  // --- Merak-Inspired Procedural World, River Basin & Ecosystem Generators ---
+  const handleGenerateProceduralWorld = useCallback(
+    (preset: 'continent' | 'archipelago' | 'pangaea' | 'twin_realms') => {
+      const mask = maskCanvasRef.current;
+      const texture = textureCanvasRef.current;
+      const elevation = elevationCanvasRef.current;
+      if (!mask || !texture || !elevation) return;
+
+      const w = mask.width;
+      const h = mask.height;
+      const mCtx = mask.getContext('2d')!;
+      const tCtx = texture.getContext('2d')!;
+      const eCtx = elevation.getContext('2d')!;
+
+      mCtx.clearRect(0, 0, w, h);
+      tCtx.clearRect(0, 0, w, h);
+      eCtx.clearRect(0, 0, w, h);
+
+      const seed = Math.random() * 1000;
+      const blobs: { cx: number; cy: number; rx: number; ry: number }[] = [];
+
+      if (preset === 'continent') {
+        blobs.push(
+          { cx: w * 0.48, cy: h * 0.48, rx: w * 0.28, ry: h * 0.28 },
+          { cx: w * 0.36, cy: h * 0.34, rx: w * 0.18, ry: h * 0.18 },
+          { cx: w * 0.62, cy: h * 0.58, rx: w * 0.2, ry: h * 0.2 },
+          { cx: w * 0.24, cy: h * 0.66, rx: w * 0.09, ry: h * 0.08 }
+        );
+      } else if (preset === 'archipelago') {
+        for (let i = 0; i < 11; i++) {
+          const angle = (i / 11) * Math.PI * 2 + (seed % 1);
+          const dist = (0.12 + (i % 3) * 0.11) * Math.min(w, h);
+          blobs.push({
+            cx: w * 0.5 + Math.cos(angle) * dist * 1.3,
+            cy: h * 0.5 + Math.sin(angle) * dist,
+            rx: w * (0.06 + (i % 4) * 0.025),
+            ry: h * (0.06 + ((i + 1) % 4) * 0.025),
+          });
+        }
+      } else if (preset === 'twin_realms') {
+        blobs.push(
+          { cx: w * 0.27, cy: h * 0.46, rx: w * 0.19, ry: h * 0.28 },
+          { cx: w * 0.33, cy: h * 0.32, rx: w * 0.14, ry: h * 0.16 },
+          { cx: w * 0.73, cy: h * 0.52, rx: w * 0.2, ry: h * 0.27 },
+          { cx: w * 0.66, cy: h * 0.68, rx: w * 0.13, ry: h * 0.15 }
+        );
+      } else {
+        // Pangaea with inner sea
+        blobs.push(
+          { cx: w * 0.5, cy: h * 0.28, rx: w * 0.34, ry: h * 0.17 },
+          { cx: w * 0.3, cy: h * 0.52, rx: w * 0.18, ry: h * 0.26 },
+          { cx: w * 0.7, cy: h * 0.52, rx: w * 0.18, ry: h * 0.26 },
+          { cx: w * 0.5, cy: h * 0.74, rx: w * 0.3, ry: h * 0.15 }
+        );
+      }
+
+      // Draw fractal polygon blobs onto mask and elevation
+      for (let bIdx = 0; bIdx < blobs.length; bIdx++) {
+        const b = blobs[bIdx];
+        const steps = 42;
+        mCtx.save();
+        mCtx.fillStyle = '#ffffff';
+        mCtx.beginPath();
+        for (let s = 0; s < steps; s++) {
+          const theta = (s / steps) * Math.PI * 2;
+          const n1 = Math.sin(theta * 3 + seed + bIdx * 1.7) * 0.16;
+          const n2 = Math.cos(theta * 7 - seed * 1.3 + bIdx) * 0.09;
+          const n3 = Math.sin(theta * 13 + bIdx * 3.1) * 0.05;
+          const factor = 1 + n1 + n2 + n3;
+          const px = b.cx + Math.cos(theta) * b.rx * factor;
+          const py = b.cy + Math.sin(theta) * b.ry * factor;
+          if (s === 0) mCtx.moveTo(px, py);
+          else mCtx.lineTo(px, py);
+        }
+        mCtx.closePath();
+        mCtx.fill();
+        mCtx.restore();
+
+        // Mountain spine inside each major landmass
+        const grad = eCtx.createRadialGradient(
+          b.cx,
+          b.cy,
+          Math.min(b.rx, b.ry) * 0.08,
+          b.cx,
+          b.cy,
+          Math.max(b.rx, b.ry) * 0.85
+        );
+        grad.addColorStop(0, 'rgba(215, 215, 215, 0.92)');
+        grad.addColorStop(0.5, 'rgba(155, 155, 155, 0.65)');
+        grad.addColorStop(1, 'rgba(128, 128, 128, 0)');
+        eCtx.fillStyle = grad;
+        eCtx.beginPath();
+        eCtx.arc(b.cx, b.cy, Math.max(b.rx, b.ry) * 0.85, 0, Math.PI * 2);
+        eCtx.fill();
+      }
+
+      // Latitude-aware biome base fill on textureCanvas
+      const latGrad = tCtx.createLinearGradient(0, 0, 0, h);
+      latGrad.addColorStop(0, '#dce8f2');
+      latGrad.addColorStop(0.18, '#3b6638');
+      latGrad.addColorStop(0.52, '#5b8e3d');
+      latGrad.addColorStop(0.78, '#c89d54');
+      latGrad.addColorStop(1, '#4a7c3a');
+      tCtx.fillStyle = latGrad;
+      tCtx.fillRect(0, 0, w, h);
+
+      CanvasRenderer.invalidateTerrainCache('all');
+      pushHistorySnapshot(`Generate Procedural ${preset}`);
+      requestRedraw();
+      setMinimapTick((t) => t + 1);
+    },
+    [pushHistorySnapshot, requestRedraw]
+  );
+
+  const handleGenerateRiverBasin = useCallback(() => {
+    const mask = maskCanvasRef.current;
+    const elev = elevationCanvasRef.current;
+    if (!mask || !elev) return;
+
+    const mCtx = mask.getContext('2d', { willReadFrequently: true });
+    if (!mCtx) return;
+    const w = mask.width;
+    const h = mask.height;
+    const mData = mCtx.getImageData(0, 0, w, h).data;
+
+    // Pick 3 inland source points on land and trace drainage paths to the sea
+    const candidates: { x: number; y: number }[] = [];
+    for (let attempt = 0; attempt < 90 && candidates.length < 3; attempt++) {
+      const rx = Math.round(w * (0.2 + Math.random() * 0.6));
+      const ry = Math.round(h * (0.2 + Math.random() * 0.6));
+      const idx = (ry * w + rx) * 4;
+      if (mData[idx + 3] > 120) {
+        candidates.push({ x: rx, y: ry });
+      }
+    }
+
+    const newRivers: PlacedPath[] = [];
+    for (let i = 0; i < candidates.length; i++) {
+      const src = candidates[i];
+      const pts = computeHydrologicalDrainagePath(src.x, src.y, elev, mask);
+      if (pts.length >= 3) {
+        newRivers.push({
+          id: `river_basin_${Date.now()}_${i}`,
+          style: 'river',
+          points: pts,
+          width: 9,
+          color: '#38bdf8',
+          textureId: 'river_water',
+          restrictToLand: true,
+          dashPattern: [],
+          opacity: 0.95,
+          smoothed: true,
+          taper: true,
+          doubleLine: false,
+        });
+      }
+    }
+
+    if (newRivers.length > 0) {
+      const nextPaths = [...pathsRef.current, ...newRivers];
+      pathsRef.current = nextPaths;
+      setPaths(nextPaths);
+      pushHistorySnapshot('Spawn Source-to-Sea Rivers', { paths: nextPaths });
+      requestRedraw({ paths: nextPaths });
+      setMinimapTick((t) => t + 1);
+    }
+  }, [pushHistorySnapshot, requestRedraw, setPaths]);
+
+  const handleAutoPopulateEcosystem = useCallback(() => {
+    const mask = maskCanvasRef.current;
+    const elev = elevationCanvasRef.current;
+    if (!mask || !elev) return;
+
+    const mCtx = mask.getContext('2d', { willReadFrequently: true });
+    const eCtx = elev.getContext('2d', { willReadFrequently: true });
+    if (!mCtx || !eCtx) return;
+
+    const w = mask.width;
+    const h = mask.height;
+    const mData = mCtx.getImageData(0, 0, w, h).data;
+    const eData = eCtx.getImageData(0, 0, w, h).data;
+
+    const treeAssets = DEFAULT_STAMP_ASSETS.filter((a) => a.category === 'trees');
+    const mountainAssets = DEFAULT_STAMP_ASSETS.filter((a) => a.category === 'mountains');
+    const addedStamps: PlacedStamp[] = [];
+
+    for (let i = 0; i < 65; i++) {
+      const rx = Math.round(w * (0.1 + Math.random() * 0.8));
+      const ry = Math.round(h * (0.1 + Math.random() * 0.8));
+      const idx = (ry * w + rx) * 4;
+      if (mData[idx + 3] < 160) continue;
+
+      const elevByte = eData[idx + 3] > 10 ? eData[idx] : 140;
+      const isPeak = elevByte > 168 && mountainAssets.length > 0;
+      const pool = isPeak ? mountainAssets : treeAssets;
+      if (pool.length === 0) continue;
+
+      const asset = pool[Math.floor(Math.random() * pool.length)];
+      addedStamps.push({
+        id: `eco_${Date.now()}_${i}`,
+        assetId: asset.id,
+        x: rx,
+        y: ry,
+        scale: isPeak ? 0.42 + Math.random() * 0.16 : 0.28 + Math.random() * 0.12,
+        rotation: Math.round((Math.random() - 0.5) * 14),
+        flipX: Math.random() > 0.5,
+        flipY: false,
+        opacity: 0.95,
+        layer: isPeak ? 2 : 1,
+        createdAt: Date.now() + i,
+      });
+    }
+
+    if (addedStamps.length > 0) {
+      const nextStamps = [...stampsRef.current, ...addedStamps];
+      stampsRef.current = nextStamps;
+      setStamps(nextStamps);
+      pushHistorySnapshot('Auto-Populate Biome Flora & Peaks', { stamps: nextStamps });
+      requestRedraw({ stamps: nextStamps });
+      setMinimapTick((t) => t + 1);
+    }
+  }, [pushHistorySnapshot, requestRedraw, setStamps]);
 
   const handleApplyExtractedMask = useCallback(
     (maskData: ImageData) => {
@@ -983,23 +1537,60 @@ export default function App() {
       tCtx.fillStyle = '#5b8e3d';
       tCtx.fillRect(0, 0, text.width, text.height);
 
+      CanvasRenderer.invalidateTerrainCache('all');
       pushHistorySnapshot('Import Map Outline');
       requestRedraw();
+      setMinimapTick((t) => t + 1);
     },
     [pushHistorySnapshot, requestRedraw]
   );
 
-  const handleSampleMapColor = useCallback(() => {
-    const canvas = mainCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-    const x = Math.max(0, Math.min(canvas.width - 1, Math.round(cursorPos.x)));
-    const y = Math.max(0, Math.min(canvas.height - 1, Math.round(cursorPos.y)));
-    const pixel = ctx.getImageData(x, y, 1, 1).data;
-    const hex = `#${[pixel[0], pixel[1], pixel[2]].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
-    setBrushSettings((previous) => ({ ...previous, brushColorOverride: hex }));
-  }, [cursorPos]);
+  const handleToggleEyedropper = useCallback(() => {
+    setIsEyedropperActive((prev) => !prev);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (isEyedropperActive) setIsEyedropperActive(false);
+        setContextMenu(null);
+        landmassShapes.cancelShapeDrag();
+        landmassShapes.cancelPolygon();
+        cancelTerritoryDraft();
+        requestRedraw();
+      } else if (e.key === 'Enter') {
+        if (
+          activeTool === 'mask' &&
+          brushSettings.landmassShape === 'polygon' &&
+          landmassShapes.polygonVertices.length >= 3
+        ) {
+          landmassShapes.commitPolygon(
+            brushSettings.maskMode,
+            brushSettings.landmassEdgeStyle || 'crisp',
+            brushSettings.roughness ?? 0.35,
+            maskCanvasRef.current,
+            elevationCanvasRef.current,
+            pushHistorySnapshot,
+            requestRedraw
+          );
+        } else if (activeTool === 'territory' && territoryVertices.length >= 3) {
+          commitTerritoryPolygon(brushSettings);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isEyedropperActive, activeTool, brushSettings, landmassShapes, territoryVertices.length, commitTerritoryPolygon, cancelTerritoryDraft, pushHistorySnapshot, requestRedraw]);
 
   const handleSetReferenceMap = useCallback(
     (config: ReferenceMapConfig | null) => {
@@ -1349,8 +1940,10 @@ export default function App() {
       handleDeleteSelectedLabel();
     } else if (selectedPathId) {
       handleDeleteSelectedPath();
+    } else if (selectedTerritoryId) {
+      handleDeleteSelectedTerritory();
     }
-  }, [selectedStampIds, selectedStampId, selectedLabelId, selectedPathId, handleDeleteSelectedStamp, handleDeleteSelectedLabel, handleDeleteSelectedPath, pushHistorySnapshot, requestRedraw, setStamps, setSelectedStampId]);
+  }, [selectedStampIds, selectedStampId, selectedLabelId, selectedPathId, selectedTerritoryId, handleDeleteSelectedStamp, handleDeleteSelectedLabel, handleDeleteSelectedPath, handleDeleteSelectedTerritory, pushHistorySnapshot, requestRedraw, setStamps, setSelectedStampId]);
 
   const handleNudgeSelection = useCallback(
     (dx: number, dy: number, recordHistory: boolean) => {
@@ -1385,9 +1978,11 @@ export default function App() {
     setSelectedLabelId(null);
     setSelectedPathId(null);
     setActivePathDraft(null);
+    landmassShapes.cancelShapeDrag();
+    landmassShapes.cancelPolygon();
     cancelTransform();
     requestRedraw();
-  }, [setSelectedStampId, setSelectedLabelId, setSelectedPathId, setActivePathDraft, cancelTransform, requestRedraw]);
+  }, [setSelectedStampId, setSelectedLabelId, setSelectedPathId, setActivePathDraft, landmassShapes, cancelTransform, requestRedraw]);
 
   const handleFlipSelectedStampX = useCallback(() => {
     if (!selectedStampId) return;
@@ -1424,28 +2019,6 @@ export default function App() {
   });
 
   // --- Mouse & Pointer Events ---
-  const finishPolygonSelection = useCallback(() => {
-    if (polygonSelection.length < 3) return;
-    const inside = (x: number, y: number) => {
-      let hit = false;
-      for (let i = 0, j = polygonSelection.length - 1; i < polygonSelection.length; j = i++) {
-        const a = polygonSelection[i];
-        const b = polygonSelection[j];
-        if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
-      }
-      return hit;
-    };
-    const selectedStamps = stampsRef.current.filter((stamp) => inside(stamp.x, stamp.y)).map((stamp) => stamp.id);
-    const selectedLabels = labelsRef.current.filter((label) => inside(label.x, label.y));
-    const selectedPaths = pathsRef.current.filter((path) => path.points.some((point) => inside(point.x, point.y)));
-    setSelectedStampIds(selectedStamps);
-    setSelectedStampId(selectedStamps[selectedStamps.length - 1] || null);
-    setSelectedLabelId(selectedLabels[selectedLabels.length - 1]?.id || null);
-    setSelectedPathId(selectedPaths[selectedPaths.length - 1]?.id || null);
-    setPolygonSelection([]);
-    requestRedraw();
-  }, [polygonSelection, requestRedraw, setSelectedLabelId, setSelectedPathId, setSelectedStampId, setSelectedStampIds]);
-
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button === 1 || e.altKey || isSpacePressed) {
       setIsPanning(true);
@@ -1456,25 +2029,55 @@ export default function App() {
     if (e.button !== 0) return;
     const { x, y } = getCanvasCoords(e);
 
-    if (activeTool === 'select' && e.shiftKey) {
-      setPolygonSelection((points) => [...points, { x, y }]);
+    // Color Eyedropper mode: sample pixel directly under click and deactivate
+    if (isEyedropperActive) {
+      const canvas = mainCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          const sampleX = Math.max(0, Math.min(canvas.width - 1, Math.round(x)));
+          const sampleY = Math.max(0, Math.min(canvas.height - 1, Math.round(y)));
+          const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
+          const hex = `#${[pixel[0], pixel[1], pixel[2]].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+          setBrushSettings((previous) => ({ ...previous, brushColorOverride: hex }));
+        }
+      }
+      setIsEyedropperActive(false);
       return;
     }
 
-    if (activeTool === 'fill') {
-      const mask = maskCanvasRef.current;
-      const landTexture = textureCanvasRef.current;
-      const waterTexture = waterTextureCanvasRef.current;
-      if (!mask || !landTexture || !waterTexture || layers.textures.locked) return;
-      const selected = [...DEFAULT_BIOMES, ...customBiomes].find((biome) => biome.id === brushSettings.selectedBiome) || DEFAULT_BIOMES[0];
-      const isWater = selected.detailType === 'water' || ['shallow_shallows', 'deep_ocean', 'river_water'].includes(selected.id);
-      const changed = fillContiguousRegion(mask, isWater ? waterTexture : landTexture, x, y, isWater ? 'water' : 'land', selected.color, brushSettings.opacity ?? 0.85);
-      if (changed) {
-        pushHistorySnapshot(isWater ? 'Fill Water Region' : 'Fill Land Biome Region');
-        requestRedraw();
+    if (activeTool === 'mask') {
+      if (layers.landmass.locked) return;
+      const shape = brushSettings.landmassShape || 'brush';
+
+      if (shape === 'polygon') {
+        landmassShapes.addPolygonVertex(
+          x,
+          y,
+          brushSettings.maskMode,
+          brushSettings.landmassEdgeStyle || 'crisp',
+          brushSettings.roughness ?? 0.35,
+          maskCanvasRef.current,
+          elevationCanvasRef.current,
+          pushHistorySnapshot,
+          requestRedraw
+        );
+        return;
       }
-      return;
+
+      if (shape !== 'brush') {
+        landmassShapes.startShapeDrag(
+          x,
+          y,
+          shape,
+          brushSettings.maskMode,
+          brushSettings.landmassEdgeStyle || 'crisp',
+          brushSettings.roughness ?? 0.35
+        );
+        return;
+      }
     }
+
     if (activeTool === 'mask' || activeTool === 'brush' || activeTool === 'elevation') {
       if (activeTool === 'brush') {
         const mode = brushSettings.mode;
@@ -1583,6 +2186,9 @@ export default function App() {
         taper: pathTaper,
         doubleLine: pathDoubleLine,
       });
+    } else if (activeTool === 'territory') {
+      if (!isPathsActive()) return;
+      addTerritoryVertex(x, y, brushSettings);
     } else if (activeTool === 'text') {
       if (!isLabelsActive()) return;
       const labelPreset = textPresetStyle === 'regal_serif'
@@ -1612,6 +2218,7 @@ export default function App() {
       });
       setSelectedStampId(null);
       setSelectedPathId(null);
+      setSelectedTerritoryId(null);
     } else if (activeTool === 'select') {
       const stampsActive = isStampsActive();
       const labelsActive = isLabelsActive();
@@ -1746,51 +2353,74 @@ export default function App() {
         }
       }
 
-      // 4. Hit-test stamps in the same front-to-back order used by rendering.
+      // 4. Hit-test stamps in front-to-back order (supporting obscured stamps & multi-select)
       if (stampsActive) {
-        const clickedStamp = getStampsFrontToBack(stampsRef.current).find((s) => isPointInStamp(x, y, s));
-        if (clickedStamp) {
-          if (e.shiftKey && selectedStampIds.includes(clickedStamp.id)) {
-            setSelectedStampIds((current) => {
-              const next = current.filter((id) => id !== clickedStamp.id);
-              setSelectedStampId(next[next.length - 1] || null);
-              return next;
-            });
+        const stampsAtPoint = getStampsFrontToBack(stampsRef.current).filter((s) => isPointInStamp(x, y, s));
+        if (stampsAtPoint.length > 0) {
+          if (e.shiftKey) {
+            // Multi-Select Protocol:
+            // If overlapping/obscured stamps exist, select any unselected stamp beneath
+            const targetStamp = stampsAtPoint.find((s) => !selectedStampIds.includes(s.id));
+            if (targetStamp) {
+              setSelectedStampIds((current) => {
+                const next = [...current, targetStamp.id];
+                setSelectedStampId(targetStamp.id);
+                return next;
+              });
+            } else {
+              // All stamps at this position are selected: toggle topmost stamp off
+              const topStamp = stampsAtPoint[0];
+              setSelectedStampIds((current) => {
+                const next = current.filter((id) => id !== topStamp.id);
+                setSelectedStampId(next[next.length - 1] || null);
+                return next;
+              });
+            }
             setSelectedLabelId(null);
             setSelectedPathId(null);
             requestRedraw();
             return;
-          }
-          if (e.shiftKey) {
-            setSelectedStampIds((current) => {
-              const next = current.includes(clickedStamp.id)
-                ? current.filter((id) => id !== clickedStamp.id)
-                : [...current, clickedStamp.id];
-              const primary = next[next.length - 1] || null;
-              setSelectedStampId(primary);
-              return next;
-            });
           } else {
-            setSelectedStampIds([clickedStamp.id]);
-            setSelectedStampId(clickedStamp.id);
+            const clickedStamp = stampsAtPoint[0];
+            const isAlreadySelected = selectedStampIds.includes(clickedStamp.id);
+            let nextGroupSelection = [clickedStamp.id];
+            if (clickedStamp.groupId) {
+              nextGroupSelection = stampsRef.current
+                .filter((s) => s.groupId === clickedStamp.groupId)
+                .map((s) => s.id);
+            }
+            if (!isAlreadySelected) {
+              setSelectedStampIds(nextGroupSelection);
+              setSelectedStampId(clickedStamp.id);
+            } else {
+              setSelectedStampId(clickedStamp.id);
+            }
+            setSelectedLabelId(null);
+            setSelectedPathId(null);
+            setSelectedTerritoryId(null);
+            if (!clickedStamp.locked) {
+              startTransform('move', {
+                startX: x,
+                startY: y,
+                initialElement: { ...clickedStamp },
+                selectedStampIds: isAlreadySelected && selectedStampIds.length > 1
+                  ? selectedStampIds
+                  : nextGroupSelection,
+                centerX: clickedStamp.x,
+                centerY: clickedStamp.y,
+                initialDist: 0,
+                initialAngle: 0,
+              });
+            }
+            requestRedraw();
+            return;
           }
-          setSelectedLabelId(null);
-          setSelectedPathId(null);
-          startTransform('move', {
-            startX: x,
-            startY: y,
-            initialElement: { ...clickedStamp },
-            selectedStampIds: e.shiftKey
-              ? Array.from(new Set([...selectedStampIds, clickedStamp.id]))
-              : [clickedStamp.id],
-            centerX: clickedStamp.x,
-            centerY: clickedStamp.y,
-            initialDist: 0,
-            initialAngle: 0,
-          });
-          requestRedraw();
-          return;
         }
+      }
+
+      // If Shift key was pressed and empty canvas clicked, KEEP existing multi-selection
+      if (e.shiftKey) {
+        return;
       }
 
       // 5. Hit-test any path
@@ -1798,6 +2428,21 @@ export default function App() {
         const clickedPath = [...pathsRef.current].reverse().find((p) => isPointNearPath(x, y, p, 24));
         if (clickedPath) {
           setSelectedPathId(clickedPath.id);
+          setSelectedStampId(null);
+          setSelectedStampIds([]);
+          setSelectedLabelId(null);
+          setSelectedTerritoryId(null);
+          requestRedraw();
+          return;
+        }
+
+        // 5B. Hit-test any political territory polygon
+        const clickedTerritory = [...territoriesRef.current]
+          .reverse()
+          .find((t) => isPointInPolygon(x, y, t.points));
+        if (clickedTerritory) {
+          setSelectedTerritoryId(clickedTerritory.id);
+          setSelectedPathId(null);
           setSelectedStampId(null);
           setSelectedStampIds([]);
           setSelectedLabelId(null);
@@ -1817,11 +2462,12 @@ export default function App() {
         setMarquee(nextMarquee);
       }
 
-      // Clear selection if empty space clicked
+      // Clear selection if empty space clicked without Shift
       setSelectedStampId(null);
       setSelectedStampIds([]);
       setSelectedLabelId(null);
       setSelectedPathId(null);
+      setSelectedTerritoryId(null);
       requestRedraw();
     } else if (activeTool === 'eraser') {
       isErasingRef.current = true;
@@ -1831,10 +2477,38 @@ export default function App() {
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const coords = getCanvasCoords(e);
-    setCursorPos(coords);
+    cursorPosRef.current = coords;
+
+    // Fast DOM-direct updates for brush ring and HUD coordinates (zero React re-render lag)
+    if (brushPreviewRef.current) {
+      const r = brushSettings.size * zoom;
+      brushPreviewRef.current.style.left = `${pan.x + coords.x * zoom - r}px`;
+      brushPreviewRef.current.style.top = `${pan.y + coords.y * zoom - r}px`;
+    }
+    if (hudCoordsRef.current) {
+      hudCoordsRef.current.textContent = `X: ${coords.x} · Y: ${coords.y}`;
+    }
+
+    // Only update React cursorPos state when needed for interactive SVG/heightfield overlays
+    if (
+      (activeTool === 'mask' && landmassShapes.polygonVertices.length > 0) ||
+      numericHeightfieldEnabled ||
+      isEyedropperActive
+    ) {
+      setCursorPos(coords);
+    }
+
+    if (activeTool === 'territory' && territoryVerticesRef.current.length > 0) {
+      requestRedraw();
+    }
 
     if (isPanning) {
       setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+      return;
+    }
+
+    if (landmassShapes.activeShapeDraft) {
+      landmassShapes.updateShapeDrag(coords.x, coords.y);
       return;
     }
 
@@ -1944,6 +2618,17 @@ export default function App() {
   const handleMouseUp = () => {
     if (isPanning) {
       setIsPanning(false);
+      return;
+    }
+
+    if (landmassShapes.activeShapeDraft) {
+      landmassShapes.commitShapeDrag(
+        maskCanvasRef.current,
+        elevationCanvasRef.current,
+        brushSettings.size,
+        pushHistorySnapshot,
+        requestRedraw
+      );
       return;
     }
 
@@ -2057,6 +2742,7 @@ export default function App() {
           stamps: stampsRef.current,
           paths: pathsRef.current,
           labels: labelsRef.current,
+          territories: territoriesRef.current,
           customAssets,
           layers,
           grid: gridConfig,
@@ -2091,14 +2777,16 @@ export default function App() {
   const selectedStamp = isStampsActive() ? stamps.find((s) => s.id === selectedStampId) || null : null;
   const selectedLabel = isLabelsActive() ? labels.find((l) => l.id === selectedLabelId) || null : null;
   const selectedPath = isPathsActive() ? paths.find((p) => p.id === selectedPathId) || null : null;
+  const selectedTerritory = isPathsActive() ? territories.find((t) => t.id === selectedTerritoryId) || null : null;
   const activeBiome = (brushSettings.selectedBiome as BiomePreset) || 'lush_grass';
 
   return (
-    <div id="cartomancer-app" className="h-screen w-screen flex flex-col bg-[#FDF6E3] overflow-hidden font-sans select-none">
+    <div id="cartomancer-app" className="h-screen w-screen flex flex-col bg-[#0B101B] text-slate-100 overflow-hidden font-sans select-none">
       {/* 1. Top Navigation Bar */}
       <Navbar
         projectName={projectName}
         onProjectNameChange={setProjectName}
+        dimensions={dimensions}
         canUndo={undoCount > 0}
         canRedo={redoCount > 0}
         undoCount={undoCount}
@@ -2114,6 +2802,7 @@ export default function App() {
         topographicalView={topographicalView}
         onToggleTopographicalView={() => setTopographicalView(!topographicalView)}
         onOpenTemplates={() => setIsTemplatesModalOpen(true)}
+        onOpenWorldAdvisor={() => setIsWorldAdvisorOpen(true)}
         onOpenMapImport={() => setIsMapImportOpen(true)}
         onOpenShaderLab={() => setIsShaderLabOpen(true)}
         onOpenExport={() => setIsExportModalOpen(true)}
@@ -2122,9 +2811,8 @@ export default function App() {
         onSaveJson={handleSaveJson}
         onLoadJson={handleLoadJson}
         onNewMap={() => {
-          const hasWork = stampsRef.current.length > 0 || pathsRef.current.length > 0 || labelsRef.current.length > 0;
-          if (hasWork && !window.confirm('Start a new blank map? Your current work is saved locally when autosave is enabled.')) return;
-          applyTemplate('blank', true);
+          applyTemplate('blank_canvas', true);
+          fitToScreen();
         }}
         onOpenHelp={() => setIsHelpModalOpen(true)}
         onToggleLayersPanel={() => setIsLayersPanelOpen(!isLayersPanelOpen)}
@@ -2154,6 +2842,7 @@ export default function App() {
               setIsToolSettingsOpen(true);
             }
           }}
+          onOpenWorldAdvisor={() => setIsWorldAdvisorOpen(true)}
           onOpenAssetOutliner={() => setIsAssetOutlinerOpen(true)}
           assetCount={stamps.length + paths.length + labels.length}
         />
@@ -2241,15 +2930,100 @@ export default function App() {
             onSelectBiome={(biome) => setBrushSettings((prev) => ({ ...prev, selectedBiome: biome }))}
             customBiomes={customBiomes}
             onOpenShaderLab={() => setIsShaderLabOpen(true)}
-            onSampleMapColor={handleSampleMapColor}
+            onSampleMapColor={handleToggleEyedropper}
+            isEyedropperActive={isEyedropperActive}
+            selectedStampIds={selectedStampIds}
+            onClearStampSelection={() => {
+              setSelectedStampId(null);
+              setSelectedStampIds([]);
+              requestRedraw();
+            }}
+            polygonVerticesCount={landmassShapes.polygonVertices.length}
+            onCommitPolygon={() => {
+              landmassShapes.commitPolygon(
+                brushSettings.maskMode,
+                brushSettings.landmassEdgeStyle || 'crisp',
+                brushSettings.roughness ?? 0.35,
+                maskCanvasRef.current,
+                elevationCanvasRef.current,
+                pushHistorySnapshot,
+                requestRedraw
+              );
+            }}
+            onUndoPolygonPoint={() => landmassShapes.removeLastPolygonVertex()}
+            onCancelPolygon={() => {
+              landmassShapes.cancelPolygon();
+              requestRedraw();
+            }}
+            onStampPresetShape={(shape: LandmassShape) => {
+              landmassShapes.placePresetShapeAt(
+                dimensions.width / 2,
+                dimensions.height / 2,
+                shape,
+                brushSettings.size,
+                brushSettings.maskMode,
+                brushSettings.landmassEdgeStyle || 'crisp',
+                brushSettings.roughness ?? 0.35,
+                maskCanvasRef.current,
+                elevationCanvasRef.current,
+                pushHistorySnapshot,
+                requestRedraw
+              );
+            }}
+            customAssets={customAssets}
+            selectedTerritory={selectedTerritory}
+            onUpdateSelectedTerritory={handleUpdateSelectedTerritory}
+            onDeleteSelectedTerritory={handleDeleteSelectedTerritory}
+            onDuplicateSelectedTerritory={handleDuplicateSelectedTerritory}
+            territoryVerticesCount={territoryVertices.length}
+            onCommitTerritory={() => commitTerritoryPolygon(brushSettings)}
+            onUndoTerritoryPoint={removeLastTerritoryVertex}
+            onCancelTerritory={cancelTerritoryDraft}
+            onToggleLockStamp={handleToggleLockSelectedStamp}
+            onGroupStamps={handleGroupSelectedStamps}
+            onUngroupStamps={handleUngroupSelectedStamps}
+            onCopyStampStyle={handleCopyStampStyle}
+            onPasteStampStyle={handlePasteStampStyle}
+            hasStyleClipboard={hasStampStyleClipboard}
+            gridConfig={gridConfig}
+            onUpdateGridConfig={(updates) => {
+              setGridConfig((prev) => ({ ...prev, ...updates }));
+              updateLayer('grid', { visible: true });
+            }}
+            topographicalView={topographicalView}
+            onToggleTopographicalView={() => setTopographicalView((v) => !v)}
+            onFillOrClearLandmass={(fillLand) => {
+              const mask = maskCanvasRef.current;
+              const elev = elevationCanvasRef.current;
+              if (!mask) return;
+              const mCtx = mask.getContext('2d');
+              if (!mCtx) return;
+              mCtx.clearRect(0, 0, dimensions.width, dimensions.height);
+              if (fillLand) {
+                mCtx.fillStyle = '#ffffff';
+                mCtx.fillRect(0, 0, dimensions.width, dimensions.height);
+              }
+              if (elev) {
+                const eCtx = elev.getContext('2d');
+                if (eCtx) {
+                  eCtx.fillStyle = fillLand ? 'rgb(145,145,145)' : 'rgb(128,128,128)';
+                  eCtx.fillRect(0, 0, dimensions.width, dimensions.height);
+                }
+              }
+              CanvasRenderer.invalidateTerrainCache('all');
+              pushHistorySnapshot();
+              requestRedraw();
+            }}
           />
         )}
 
         <div
           ref={viewportRef}
           id="map-viewport"
-          className={`flex-1 bg-[#F4EBD0]/40 overflow-hidden relative ${
-            isPanning
+          className={`flex-1 studio-viewport-grid overflow-hidden relative ${
+            isEyedropperActive
+              ? 'cursor-crosshair'
+              : isPanning
               ? 'cursor-grabbing'
               : isSpacePressed
               ? 'cursor-grab'
@@ -2259,36 +3033,147 @@ export default function App() {
               ? 'cursor-text'
               : 'cursor-crosshair'
           }`}
-          onMouseDown={handleMouseDown}
-          onDoubleClick={() => {
-            if (activeTool === 'select' && polygonSelection.length >= 3) finishPolygonSelection();
+          onMouseDown={(e) => {
+            if (contextMenu) setContextMenu(null);
+            handleMouseDown(e);
           }}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            const { x, y } = getCanvasCoords(e);
+            const stampsAtPoint = getStampsFrontToBack(stampsRef.current).filter((s) => isPointInStamp(x, y, s));
+            if (stampsAtPoint.length > 0) {
+              const top = stampsAtPoint[0];
+              if (!selectedStampIds.includes(top.id)) {
+                const groupIds = top.groupId
+                  ? stampsRef.current.filter((s) => s.groupId === top.groupId).map((s) => s.id)
+                  : [top.id];
+                setSelectedStampIds(groupIds);
+              }
+              setSelectedStampId(top.id);
+              setSelectedLabelId(null);
+              setSelectedPathId(null);
+              setSelectedTerritoryId(null);
+              requestRedraw();
+            }
+            const rect = viewportRef.current?.getBoundingClientRect();
+            if (rect) {
+              setContextMenu({
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top,
+              });
+            }
+          }}
+          onDoubleClick={() => {
+            if (
+              activeTool === 'mask' &&
+              brushSettings.landmassShape === 'polygon' &&
+              landmassShapes.polygonVertices.length >= 3
+            ) {
+              landmassShapes.commitPolygon(
+                brushSettings.maskMode,
+                brushSettings.landmassEdgeStyle || 'crisp',
+                brushSettings.roughness ?? 0.35,
+                maskCanvasRef.current,
+                elevationCanvasRef.current,
+                pushHistorySnapshot,
+                requestRedraw
+              );
+            } else if (activeTool === 'territory' && territoryVertices.length >= 3) {
+              commitTerritoryPolygon(brushSettings);
+            }
+          }}
         >
+          {/* Floating Context Action Bar above Selected Objects */}
+          {activeTool === 'select' && (
+            <CanvasContextBar
+              zoom={zoom}
+              pan={pan}
+              selectedStamp={selectedStamp}
+              selectedStampIds={selectedStampIds}
+              selectedTerritory={selectedTerritory}
+              selectedLabel={selectedLabel}
+              selectedPath={selectedPath}
+              hasStyleClipboard={hasStampStyleClipboard}
+              onUpdateSelectedStamp={handleUpdateSelectedStamp}
+              onBringToFront={handleBringStampToFront}
+              onSendToBack={handleSendStampToBack}
+              onDuplicateSelected={
+                selectedStamp
+                  ? handleDuplicateSelectedStamp
+                  : selectedTerritory
+                  ? handleDuplicateSelectedTerritory
+                  : selectedLabel
+                  ? handleDuplicateSelectedLabel
+                  : () => {}
+              }
+              onDeleteSelected={handleDeleteSelected}
+              onToggleLockStamp={handleToggleLockSelectedStamp}
+              onGroupStamps={handleGroupSelectedStamps}
+              onUngroupStamps={handleUngroupSelectedStamps}
+              onCopyStampStyle={handleCopyStampStyle}
+              onPasteStampStyle={handlePasteStampStyle}
+              onUpdateSelectedTerritory={handleUpdateSelectedTerritory}
+            />
+          )}
+
+          {/* Right-Click Canvas Context Menu */}
+          {contextMenu && (
+            <CanvasContextMenu
+              position={contextMenu}
+              hasSelection={Boolean(selectedStamp || selectedLabel || selectedPath || selectedTerritory)}
+              isStampSelected={Boolean(selectedStamp)}
+              isMultiStampSelected={selectedStampIds.length > 1}
+              isLocked={Boolean(selectedStamp?.locked)}
+              isGrouped={Boolean(selectedStamp?.groupId)}
+              hasStyleClipboard={hasStampStyleClipboard}
+              onClose={() => setContextMenu(null)}
+              onBringToFront={handleBringStampToFront}
+              onSendToBack={handleSendStampToBack}
+              onFlipX={handleFlipSelectedStampX}
+              onToggleLock={handleToggleLockSelectedStamp}
+              onGroup={handleGroupSelectedStamps}
+              onUngroup={handleUngroupSelectedStamps}
+              onCopyStyle={handleCopyStampStyle}
+              onPasteStyle={handlePasteStampStyle}
+              onDuplicate={
+                selectedStamp
+                  ? handleDuplicateSelectedStamp
+                  : selectedTerritory
+                  ? handleDuplicateSelectedTerritory
+                  : selectedLabel
+                  ? handleDuplicateSelectedLabel
+                  : () => {}
+              }
+              onDelete={handleDeleteSelected}
+              onFitToScreen={fitToScreen}
+            />
+          )}
+          {isEyedropperActive && (
+            <div
+              className="absolute pointer-events-none z-40 bg-slate-900/90 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md shadow-lg border border-violet-400 flex items-center gap-1.5"
+              style={{
+                left: pan.x + cursorPos.x * zoom + 16,
+                top: pan.y + cursorPos.y * zoom + 16,
+              }}
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-violet-400 animate-pulse" />
+              <span>Click to sample color (Esc to cancel)</span>
+            </div>
+          )}
           {['mask', 'brush', 'elevation', 'eraser'].includes(activeTool) && (
             <div
+              ref={brushPreviewRef}
               id="brush-cursor-preview"
-              className="absolute pointer-events-none z-30 rounded-full border-2 border-sky-500/80 bg-sky-300/10"
+              className="absolute pointer-events-none z-30 rounded-full border-2 border-amber-400/85 bg-amber-300/10"
               style={{
-                left: pan.x + cursorPos.x * zoom - brushSettings.size * zoom,
-                top: pan.y + cursorPos.y * zoom - brushSettings.size * zoom,
+                left: pan.x + cursorPosRef.current.x * zoom - brushSettings.size * zoom,
+                top: pan.y + cursorPosRef.current.y * zoom - brushSettings.size * zoom,
                 width: brushSettings.size * zoom * 2,
                 height: brushSettings.size * zoom * 2,
               }}
             />
-          )}
-          {polygonSelection.length > 0 && (
-            <svg className="absolute inset-0 pointer-events-none z-30 overflow-visible">
-              <polygon
-                points={polygonSelection.map((point) => `${pan.x + point.x * zoom},${pan.y + point.y * zoom}`).join(' ')}
-                fill="rgba(14, 165, 233, 0.12)"
-                stroke="rgba(14, 116, 144, 0.95)"
-                strokeWidth="2"
-                strokeDasharray="6 4"
-              />
-              {polygonSelection.map((point, index) => <circle key={index} cx={pan.x + point.x * zoom} cy={pan.y + point.y * zoom} r="4" fill="#0e7490" />)}
-            </svg>
           )}
           {marquee && (
             <div
@@ -2303,6 +3188,7 @@ export default function App() {
             />
           )}
           <div
+            ref={mapStageRef}
             id="map-stage"
             className="absolute origin-top-left shadow-2xl select-none"
             style={{
@@ -2317,27 +3203,156 @@ export default function App() {
               id="main-map-canvas"
               width={dimensions.width}
               height={dimensions.height}
-              className="rounded-sm shadow-2xl ring-4 ring-[#E2D6B5] block bg-[#0f172a]"
+              className="rounded-sm shadow-2xl ring-2 ring-slate-700/90 block bg-[#0f172a]"
             />
+
+            {/* Interactive Landmass Shape & Polygon Drafting Overlay */}
+            {activeTool === 'mask' && (landmassShapes.activeDraftSvgPath || landmassShapes.polygonVertices.length > 0) && (
+              <svg
+                id="landmass-shape-preview-overlay"
+                className="absolute inset-0 pointer-events-none z-20"
+                width={dimensions.width}
+                height={dimensions.height}
+                style={{ overflow: 'visible' }}
+              >
+                {/* Dragged Geometric Shape */}
+                {landmassShapes.activeDraftSvgPath && (
+                  <g id="landmass-shape-draft">
+                    <path
+                      d={landmassShapes.activeDraftSvgPath}
+                      fill={brushSettings.maskMode === 'carve_water' ? 'rgba(56, 189, 248, 0.28)' : 'rgba(245, 158, 11, 0.28)'}
+                      stroke={brushSettings.maskMode === 'carve_water' ? '#0284c7' : '#d97706'}
+                      strokeWidth={2.5}
+                      strokeDasharray="6 4"
+                    />
+                    {landmassShapes.activeShapeDraft && (
+                      <>
+                        <circle
+                          cx={landmassShapes.activeShapeDraft.startX}
+                          cy={landmassShapes.activeShapeDraft.startY}
+                          r={4}
+                          fill="#ffffff"
+                          stroke="#3E2723"
+                          strokeWidth={2}
+                        />
+                        <g
+                          transform={`translate(${(landmassShapes.activeShapeDraft.startX + landmassShapes.activeShapeDraft.currentX) / 2}, ${(landmassShapes.activeShapeDraft.startY + landmassShapes.activeShapeDraft.currentY) / 2 - 14})`}
+                        >
+                          <rect
+                            x="-40"
+                            y="-12"
+                            width="80"
+                            height="20"
+                            rx="4"
+                            fill="#3E2723"
+                            opacity="0.88"
+                          />
+                          <text
+                            x="0"
+                            y="2"
+                            fill="#fde68a"
+                            fontSize="10"
+                            fontFamily="monospace"
+                            fontWeight="bold"
+                            textAnchor="middle"
+                          >
+                            {Math.round(
+                              Math.hypot(
+                                landmassShapes.activeShapeDraft.currentX - landmassShapes.activeShapeDraft.startX,
+                                landmassShapes.activeShapeDraft.currentY - landmassShapes.activeShapeDraft.startY
+                              )
+                            )}px
+                          </text>
+                        </g>
+                      </>
+                    )}
+                  </g>
+                )}
+
+                {/* Custom Polygon in Progress */}
+                {landmassShapes.polygonVertices.length > 0 && (
+                  <g id="landmass-polygon-draft">
+                    {landmassShapes.polygonVertices.length >= 3 && (
+                      <path
+                        d={`${landmassShapes.polygonSvgPath} Z`}
+                        fill={brushSettings.maskMode === 'carve_water' ? 'rgba(56, 189, 248, 0.18)' : 'rgba(245, 158, 11, 0.18)'}
+                        stroke="none"
+                      />
+                    )}
+                    {landmassShapes.polygonVertices.length > 1 && (
+                      <path
+                        d={landmassShapes.polygonSvgPath}
+                        fill="none"
+                        stroke={brushSettings.maskMode === 'carve_water' ? '#0284c7' : '#d97706'}
+                        strokeWidth={2.5}
+                        strokeDasharray="5 3"
+                      />
+                    )}
+                    <line
+                      x1={landmassShapes.polygonVertices[landmassShapes.polygonVertices.length - 1].x}
+                      y1={landmassShapes.polygonVertices[landmassShapes.polygonVertices.length - 1].y}
+                      x2={cursorPos.x}
+                      y2={cursorPos.y}
+                      stroke={brushSettings.maskMode === 'carve_water' ? '#38bdf8' : '#fbbf24'}
+                      strokeWidth={1.5}
+                      strokeDasharray="3 3"
+                    />
+                    {landmassShapes.polygonVertices.map((v, idx) => (
+                      <g key={idx}>
+                        <circle
+                          cx={v.x}
+                          cy={v.y}
+                          r={idx === 0 ? 6 : 4}
+                          fill={idx === 0 ? '#10b981' : '#ffffff'}
+                          stroke="#1e293b"
+                          strokeWidth={idx === 0 ? 2.5 : 1.5}
+                        />
+                        {idx === 0 && (
+                          <circle
+                            cx={v.x}
+                            cy={v.y}
+                            r={10}
+                            fill="none"
+                            stroke="#10b981"
+                            strokeWidth={1.5}
+                            strokeDasharray="2 2"
+                          />
+                        )}
+                      </g>
+                    ))}
+                  </g>
+                )}
+              </svg>
+            )}
           </div>
 
-          <div className="absolute bottom-3 left-3 bg-[#FDF6E3]/95 backdrop-blur-sm border border-[#E2D6B5] rounded-lg px-3 py-1.5 flex items-center gap-4 text-[11px] text-slate-700 shadow-md pointer-events-none select-none">
-            <div>
-              X: <span className="font-mono font-bold text-slate-900">{cursorPos.x}</span> Y:{' '}
-              <span className="font-mono font-bold text-slate-900">{cursorPos.y}</span>
-            </div>
-            <div className="w-[1px] h-3 bg-[#E2D6B5]" />
-            <div>
-              Size:{' '}
-              <span className="font-mono font-bold text-slate-900">
-                {dimensions.width} x {dimensions.height}
-              </span>
-            </div>
-            <div className="w-[1px] h-3 bg-[#E2D6B5]" />
-            <div className="text-[#D9480F] font-bold capitalize">
-              Active: {activeTool}
-            </div>
+          {/* Bottom-Left Studio Telemetry Readout */}
+          <div className="absolute bottom-3 left-3 bg-[#0F1623]/95 backdrop-blur-md border border-slate-700/80 rounded-xl px-3 py-1.5 flex items-center gap-3 text-[11px] text-slate-300 shadow-xl pointer-events-none select-none z-20">
+            <span ref={hudCoordsRef} id="hud-coords-readout" className="font-mono tabular-nums text-slate-200">
+              X: {cursorPosRef.current.x} · Y: {cursorPosRef.current.y}
+            </span>
+            <span className="text-slate-600" aria-hidden="true">·</span>
+            <span className="font-mono tabular-nums text-slate-300">
+              {dimensions.width} × {dimensions.height}
+            </span>
+            <span className="text-slate-600" aria-hidden="true">·</span>
+            <span className="text-amber-400 font-semibold capitalize">
+              Tool: {activeTool}
+            </span>
           </div>
+
+          {/* Bottom-Right Interactive World Navigator & Map Size Switcher */}
+          <MinimapNavigator
+            mainCanvasRef={mainCanvasRef}
+            viewportRef={viewportRef}
+            dimensions={dimensions}
+            zoom={zoom}
+            pan={pan}
+            onPanChange={(nextPan) => setPan(nextPan)}
+            onFitToScreen={() => fitToScreen()}
+            onResizeCanvas={handleResizeCanvas}
+            renderTrigger={minimapTick}
+          />
         </div>
 
         <LayersPanel
@@ -2443,6 +3458,23 @@ export default function App() {
         onDeletePath={handleDeletePathById}
         onDeleteLabel={handleDeleteLabelById}
         onDeleteBatch={handleDeleteBatchFromTable}
+      />
+
+      <WorldAdvisorModal
+        isOpen={isWorldAdvisorOpen}
+        onClose={() => setIsWorldAdvisorOpen(false)}
+        dimensions={dimensions}
+        onResizeCanvas={handleResizeCanvas}
+        maskCanvas={maskCanvasRef.current}
+        elevationCanvas={elevationCanvasRef.current}
+        stamps={stamps}
+        paths={paths}
+        territories={territories}
+        onGenerateProceduralWorld={handleGenerateProceduralWorld}
+        onDeriveTopography={handleDeriveTopography}
+        onHydraulicErosion={handleHydraulicErosion}
+        onGenerateRiverBasin={handleGenerateRiverBasin}
+        onAutoPopulateEcosystem={handleAutoPopulateEcosystem}
       />
     </div>
   );

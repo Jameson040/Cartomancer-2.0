@@ -36,6 +36,14 @@ interface ShaderLabModalProps {
 // Built-in starter pattern textures (procedural SVG data URIs for instant testing)
 const STARTER_PATTERNS = [
   {
+    name: 'Ocean Ripple Waves',
+    detailType: 'water' as const,
+    color: '#1a365d',
+    roughnessColor: '#0f233a',
+    scale: 48,
+    dataUrl: `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" fill="%231a365d"/><path d="M0 16 Q12 10 24 16 T48 16" stroke="%2338bdf8" stroke-width="2" fill="none" opacity="0.6"/><path d="M0 32 Q12 26 24 32 T48 32" stroke="%2338bdf8" stroke-width="1.8" fill="none" opacity="0.45"/><path d="M0 48 Q12 42 24 48 T48 48" stroke="%2338bdf8" stroke-width="2" fill="none" opacity="0.6"/></svg>`,
+  },
+  {
     name: 'Meadow Grass Blades',
     detailType: 'grass' as const,
     color: '#4d8036',
@@ -323,10 +331,10 @@ export const ShaderLabModal: React.FC<ShaderLabModalProps> = ({
             </div>
             <div>
               <h2 className="font-['Cinzel'] font-bold text-lg text-slate-800 tracking-wider">
-                Shader Lab & Custom Biome Maker
+                Shader Lab
               </h2>
               <p className="text-xs text-slate-600">
-                Upload images to extract color palettes with an eyedropper, or configure seamless pattern shaders
+                Sample custom palettes with an eyedropper, or create seamless land & sea pattern shaders
               </p>
             </div>
           </div>
@@ -535,10 +543,10 @@ export const ShaderLabModal: React.FC<ShaderLabModalProps> = ({
                           className="flex-1 px-2 py-1 text-xs rounded border border-[#E2D6B5] bg-white focus:outline-none"
                         >
                           <option value="grass">Meadow / Grassland</option>
+                          <option value="water">Sea / Ocean / Water</option>
                           <option value="sand">Sand / Desert</option>
                           <option value="rock">Rock / Mountain</option>
                           <option value="snow">Snow / Ice</option>
-                          <option value="water">Lagoon / Water</option>
                           <option value="swamp">Swamp / Marsh</option>
                           <option value="volcanic">Volcanic / Ash</option>
                           <option value="parchment">Parchment / Plain</option>
@@ -735,10 +743,10 @@ export const ShaderLabModal: React.FC<ShaderLabModalProps> = ({
                       className="w-full px-2.5 py-1 text-xs rounded border border-[#E2D6B5] bg-white focus:outline-none"
                     >
                       <option value="grass">Meadow / Grassland</option>
+                      <option value="water">Sea / Ocean / Water</option>
                       <option value="sand">Sand / Desert</option>
                       <option value="rock">Rock / Mountain</option>
                       <option value="snow">Snow / Ice</option>
-                      <option value="water">Lagoon / Water</option>
                       <option value="swamp">Swamp / Marsh</option>
                       <option value="volcanic">Volcanic / Ash</option>
                       <option value="parchment">Parchment / Plain</option>

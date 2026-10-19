@@ -1,5 +1,6 @@
 /**
  * Renders directional hillshading relief, topographical heatmaps, and metric elevation legends.
+ * Caches the computed hillshade and heatmap buffers so interactive object/stamp/path frames run at 60 FPS on 2K–4K maps.
  */
 import { WorldElevationConfig } from '../../types';
 import {
@@ -7,6 +8,25 @@ import {
   byteToMeters,
   getTopographicRgbMeters,
 } from '../elevationModel';
+
+let reliefCacheCanvas: HTMLCanvasElement | null = null;
+let reliefCacheCtx: CanvasRenderingContext2D | null = null;
+let reliefCacheKey = '';
+let reliefGeneration = 0;
+
+let heatmapCacheCanvas: HTMLCanvasElement | null = null;
+let heatmapCacheCtx: CanvasRenderingContext2D | null = null;
+let heatmapCacheKey = '';
+
+export function invalidateReliefCache(): void {
+  reliefGeneration++;
+  reliefCacheKey = '';
+  heatmapCacheKey = '';
+}
+
+export function getReliefGeneration(): number {
+  return reliefGeneration;
+}
 
 export function getTopographicRgb(val: number): [number, number, number] {
   if (val <= 60) {
@@ -43,14 +63,33 @@ export function renderReliefShading(
   contourInterval: number = 250,
   elevationConfig: WorldElevationConfig = DEFAULT_WORLD_ELEVATION
 ): void {
-  const eCtx = elevationCanvas.getContext('2d');
-  const mCtx = maskCanvas.getContext('2d');
+  const targetKey = `${reliefGeneration}|${width}x${height}|${showContourLines ? contourInterval : 0}|${elevationConfig.minElevation}|${elevationConfig.maxElevation}`;
+
+  if (
+    reliefCacheCanvas &&
+    reliefCacheCanvas.width === width &&
+    reliefCacheCanvas.height === height &&
+    reliefCacheKey === targetKey
+  ) {
+    ctx.save();
+    ctx.drawImage(reliefCacheCanvas, 0, 0, width, height);
+    ctx.restore();
+    return;
+  }
+
+  const eCtx = elevationCanvas.getContext('2d', { willReadFrequently: true });
+  const mCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
   if (!eCtx || !mCtx) return;
 
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = width;
-  tempCanvas.height = height;
-  const tCtx = tempCanvas.getContext('2d');
+  if (!reliefCacheCanvas) {
+    reliefCacheCanvas = document.createElement('canvas');
+    reliefCacheCtx = reliefCacheCanvas.getContext('2d');
+  }
+  if (reliefCacheCanvas.width !== width || reliefCacheCanvas.height !== height) {
+    reliefCacheCanvas.width = width;
+    reliefCacheCanvas.height = height;
+  }
+  const tCtx = reliefCacheCtx;
   if (!tCtx) return;
 
   const eData = eCtx.getImageData(0, 0, width, height);
@@ -148,9 +187,10 @@ export function renderReliefShading(
   }
 
   tCtx.putImageData(outImg, 0, 0);
+  reliefCacheKey = targetKey;
 
   ctx.save();
-  ctx.drawImage(tempCanvas, 0, 0, width, height);
+  ctx.drawImage(reliefCacheCanvas, 0, 0, width, height);
   ctx.restore();
 }
 
@@ -219,14 +259,34 @@ export function renderTopographicalHeatmap(
   maskCanvas: HTMLCanvasElement,
   elevationConfig: WorldElevationConfig = DEFAULT_WORLD_ELEVATION
 ): void {
-  const eCtx = elevationCanvas.getContext('2d');
-  const mCtx = maskCanvas.getContext('2d');
+  const targetKey = `${reliefGeneration}|${width}x${height}|${elevationConfig.minElevation}|${elevationConfig.maxElevation}|${elevationConfig.customName || ''}`;
+
+  if (
+    heatmapCacheCanvas &&
+    heatmapCacheCanvas.width === width &&
+    heatmapCacheCanvas.height === height &&
+    heatmapCacheKey === targetKey
+  ) {
+    ctx.save();
+    ctx.drawImage(heatmapCacheCanvas, 0, 0, width, height);
+    renderTopographicLegend(ctx, width, height, elevationConfig);
+    ctx.restore();
+    return;
+  }
+
+  const eCtx = elevationCanvas.getContext('2d', { willReadFrequently: true });
+  const mCtx = maskCanvas.getContext('2d', { willReadFrequently: true });
   if (!eCtx || !mCtx) return;
 
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = width;
-  tempCanvas.height = height;
-  const tCtx = tempCanvas.getContext('2d');
+  if (!heatmapCacheCanvas) {
+    heatmapCacheCanvas = document.createElement('canvas');
+    heatmapCacheCtx = heatmapCacheCanvas.getContext('2d');
+  }
+  if (heatmapCacheCanvas.width !== width || heatmapCacheCanvas.height !== height) {
+    heatmapCacheCanvas.width = width;
+    heatmapCacheCanvas.height = height;
+  }
+  const tCtx = heatmapCacheCtx;
   if (!tCtx) return;
 
   const eData = eCtx.getImageData(0, 0, width, height);
@@ -269,9 +329,10 @@ export function renderTopographicalHeatmap(
   }
 
   tCtx.putImageData(outImg, 0, 0);
+  heatmapCacheKey = targetKey;
 
   ctx.save();
-  ctx.drawImage(tempCanvas, 0, 0, width, height);
+  ctx.drawImage(heatmapCacheCanvas, 0, 0, width, height);
   renderTopographicLegend(ctx, width, height, elevationConfig);
   ctx.restore();
 }
